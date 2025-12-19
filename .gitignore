@@ -1,0 +1,11 @@
+# Ignore all Manim video/image outputs
+**/media/
+**/__pycache__/
+
+# Ignore environment files
+.venv/
+.uv/
+.python-version
+
+# Ignore large data files
+*.mp4
