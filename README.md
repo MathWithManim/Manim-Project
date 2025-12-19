@@ -1,4 +1,4 @@
-  GNU nano # Manim Collections
+ # Manim Collections
 
 A simple place for math animations. This repository holds different projects made with **Manim**, turning math ideas into clear videos.
 
@@ -53,6 +53,7 @@ You can find the finished videos here:
 ---
 
 *Made to explore math and code.*
+
 
 
 
