@@ -1,9 +1,0 @@
-[project]
-name = "graph"
-version = "0.1.0"
-description = "This mainly focuses on graphs or something."
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "manim>=0.19.1",
-]
