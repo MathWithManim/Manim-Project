@@ -20,7 +20,7 @@ class life(Scene):
     introBox = VGroup(brandLogo, brandText).arrange(RIGHT, buff=1.0).move_to(ORIGIN)
     
     self.play(Write(introBox), run_time=1.5)
-    self.wait(5) 
+    self.wait(1.8) 
     self.play(introBox.animate.scale(0.18).to_corner(UL, buff=0.2), run_time=0.8)
 
     # headers
