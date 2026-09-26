@@ -79,47 +79,47 @@ Draft visual mechanics per scene: S1 spins a cluster of 6 fibers; S2 transforms 
 
 Global budget: 9 scenes, **849 s total = 14:09**, inside the 15:00 cap: animation time 152 s + narration pause time 697 s. `SCENE_BUDGET` in `scene.py` is the single source of truth — it holds each scene's duration, animation total and ordered wait list, and `verify_budget()` raises at render time if the code and the script ever disagree. `check_scenes.py` and `build_narration.py` re-derive the numbers from the source, so nothing here is hand-maintained.
 
-## S1 · Cold Open — the linked-circle mystery — 0:00–0:50 (50.0 s)
+## S1 · Cold Open — the linked-circle mystery — 0:00-0:50 (50.0 s)
 Animations 19.0 s: FadeIn title+subtitle 2.0 → FadeOut 1.0 → Create fiber A 3.0 → Create fibers B,C 5.0 → Create fibers D,E,F 6.0 → begin ambient rotation (0.10) → caption in 1.0 → caption out 1.0.
 Waits 31.0 s: `[3, 3, 2, 3, 10, 4, 6]`
 Visual: six colored circles at θ=1.0, fully 3D, camera orbiting; caption "no two touch · every pair linked".
 
-## S2 · The Spheres S¹, S², S³ — 0:50–2:22 (92.0 s)
+## S2 · The Spheres S¹, S², S³ — 0:50-2:22 (92.0 s)
 Animations 20.0 s: FadeOut S1 1.0 → header "1 · THE SPHERES" 1.0 → Create circle (S¹) 2.0 → label S¹ 1.0 → circle→wireframe sphere 1.5 → label S² 1.0 → S³ equation 1.5 → latitude rings staggered 4.0 → equation glow 2.0 → FadeOut block 1.0 → header "WHY S³?" 1.0 → 4-coordinates card 1.0 → annotation 2.0 → wipe 1.0.
 Waits 72.0 s: `[3, 3, 7, 6, 6, 7, 7, 6, 7, 7, 6, 7]`
 Visual: 1D→2D→"3D surface inside 4D"; |z₁|²+|z₂|²=1 shown as the equation that carries the whole film.
 
-## S3 · Stereographic Projection — 2:22–4:21 (119.0 s)
+## S3 · Stereographic Projection — 2:22-4:21 (119.0 s)
 Animations 23.0 s: FadeOut S2 1.0 → header "2 · STEREOGRAPHIC PROJECTION" 1.0 → 2D rig (circle, north pole, ground line, runner, ray, shadow) 3.0 → sweep 3.0 → "north pole is the point at infinity" 1.5 → FadeOut 2D 1.0 → 3D rig (sphere R=0.45, plane z=−1.05) 2.0 → latitude 120° 1.5 → its shadow 1.5 → 110° + shadow 2.5 → 90° equator + shadow 2.5 → Indicate 1.0 → callout 1.0 → FadeOut rig 1.5.
 Waits 96.0 s: `[4, 7, 7, 7, 7, 7, 8, 9, 7, 7, 7, 7, 6, 6]`
 Visual: flat 2D warm-up pinned left (the transfer of intuition), then the true 3D rig. Shadow radius is 1.5·cot(α/2), so every shadow stays inside the radius-2.6 ball.
 
-## S4 · One Dimension Up: S³ → ℝ³ — 4:21–5:58 (97.5 s)
+## S4 · One Dimension Up: S³ → ℝ³ — 4:21-5:58 (97.5 s)
 Animations 15.0 s: FadeOut 1.0 → header "3 · ONE DIMENSION UP" 1.0 → equator + pole 1.0 → S³ ≅ ℝ⁴ card 1.0 → Create equator 2.0 → rider Dot3D 2.0 → Create unit circle 1.5 → Indicate 1.0 → Create tilted circle 1.5 → Create its tilted shadow 1.5 → caption 1.5 → FadeOut pair 0.5 → FadeOut 0.5.
 Waits 82.5 s: `[5, 6, 7, 7, 7, 8, 7, 8, 7, 6, 6, 4, 4.5]`
 Visual: the key transfer — "circles in space are shadows of circles on the hypersphere".
 
-## S5 · The Hopf Map and Its Fibers — 5:58–7:47 (109.0 s)
+## S5 · The Hopf Map and Its Fibers — 5:58-7:47 (109.0 s)
 Animations 19.0 s: FadeOut 1.0 → header "4 · THE HOPF MAP" 1.0 → inset base-sphere S² 2.0 → Hopf formula 2.0 → fiber formula 2.0 → Create fiber 2.0 → base-point sweep + fiber rotation 2.0 → reset sweep 1.0 → upper fiber 1.5 → camera pullback 2.0 → caption 1.5 → punchline 1.0 → FadeOut formulas 0.5 → FadeOut 0.5.
 Waits 90.0 s: `[4, 5, 7, 7, 8, 8, 8, 7, 7, 7, 7, 6, 6, 3]`
 Visual: corner S² as the "code book", live fiber over the moving base point; space is one fiber per point of S².
 
-## S6 · Linked — 7:47–10:00 (133.5 s)
+## S6 · Linked — 7:47-10:01 (133.5 s)
 Animations 16.0 s: FadeOut 1.0 → header "5 · LINKED" 1.0 → fiber A 1.5 → fiber B 1.5 → rotate A through B 1.5 → tags 1.0 → verdict 1.0 → second pair 1.5 → rotate 1.0 → camera orbit 1.5 → "any two fibers" 1.0 → "crossing is 4D" 1.0 → Indicate 1.0 → FadeOut 0.5 → FadeOut 1.0 → FadeOut all 0.5.
 Waits 117.5 s: `[4, 5, 7, 8, 8, 9, 9, 9, 9, 9, 8, 7, 6, 6, 5.5, 8]`
 Visual: the peak — "take ANY two fibers: they are linked", camera winding between a red/blue pair.
 
-## S7 · One Line, Four Tori — 10:00–11:56 (115.5 s)
+## S7 · One Line, Four Tori — 10:01-11:56 (115.5 s)
 Animations 20.0 s: FadeOut 1.0 → header "6 · ONE LINE, THREE TORI" 1.0 → z-axis line 2.0 → four Clifford tori 5.0 → their 32 fibers 5.0 → north-pole note 1.0 → Villarceau note 1.0 → Indicate hero fiber 1.0 → code-book note 1.0 → Indicate torus 1.0 → Indicate line 1.0 → FadeOut notes 0.5 → FadeOut header 0.5.
 Waits 95.5 s: `[4, 5, 8, 9, 10, 10, 9, 9, 8, 7, 6, 5, 5.5]`
 Visual: nested Clifford tori at θ ∈ {0.45, 0.85, 1.2, 1.5}, each major = sec(θ/2), minor = tan(θ/2), each carrying 8 fibers, plus the north-pole line at radius 2.5. Max radius 2.47 ≤ 2.6 ✓.
 
-## S8 · The Whole Structure — 11:56–13:00 (64.0 s)
+## S8 · The Whole Structure — 11:56-13:00 (64.0 s)
 Animations 10.0 s: FadeOut 1.0 → header "7 · THE WHOLE STRUCTURE" 1.0 → structure in 4.0 → Clifford translation (all four tori to θ=0.9) 5.0.
 Waits 54.0 s: `[4, 6, 30, 14]`
 Visual: the money shot — a 44 s continuous ambient orbit while the nested tori slide into one another. S8 rebuilds the structure via `build_structure()` so it also renders standalone under `HOPF_ONLY=S8`.
 
-## S9 · Why It Matters — 13:00–14:09 (68.5 s)
+## S9 · Why It Matters — 13:00-14:09 (68.5 s)
 Animations 10.0 s: FadeOut 1.0 → header "8 · WHY IT MATTERS" 1.0 → qubit note 1.5 → rotations note 1.5 → quaternion note 1.0 → history note 1.0 → closing cluster 2.0 → closing title 1.0 → final line 1.0 → FadeOut 0.5.
 Waits 58.5 s: `[4, 5, 7, 7, 7, 7, 6, 6, 5, 4.5]`
 Visual: qubits, SO(3) and quaternions; the fade out ends on the six linked circles from S1.
@@ -154,7 +154,7 @@ Sync contract: every `[pause: X]` equals exactly one `self.pause(X)` call in the
 
 Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:00 cap).
 
-## S1 · 0:00–0:50
+## S1 · 0:00-0:50
 
 "Stop. Look at this picture." [pause: 3]
 
@@ -170,7 +170,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "Let's begin." [pause: 6]
 
-## S2 · 0:50–2:30
+## S2 · 0:50-2:22
 
 "We're going to climb a ladder of spheres. Start simple: a circle." [pause: 3]
 
@@ -198,7 +198,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "Let's build it, one dimension at a time." [pause: 7]
 
-## S3 · 2:30–4:30
+## S3 · 2:22-4:21
 
 "Stereographic projection squashes a sphere down to flat space. Let me show you with a circle — S one — because everything carries over." [pause: 4]
 
@@ -232,7 +232,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "Because we are about to do the exact same thing... one dimension higher." [pause: 6]
 
-## S4 · 4:30–6:15
+## S4 · 4:21-5:58
 
 "One dimension higher. Points of S three are four numbers, so to see them we project from a pole exactly as before — only now the shadow lands in three-dimensional space." [pause: 5]
 
@@ -262,7 +262,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "The Hopf map." [pause: 4.5]
 
-## S5 · 6:15–8:15
+## S5 · 5:58-7:47
 
 "Write S three as pairs of complex numbers, z one and z two, with squared lengths that add to one." [pause: 4]
 
@@ -294,7 +294,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "Now... what happens when you pick two of them?" [pause: 3]
 
-## S6 · 8:15–10:30
+## S6 · 7:47-10:01
 
 "Take two fibers. Two circles in space, belonging to two different base points." [pause: 4]
 
@@ -328,7 +328,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "...into tori." [pause: 8]
 
-## S7 · 10:30–12:45
+## S7 · 10:01-11:56
 
 "Keep the base point on the equator of S two — the green latitude — and every fiber over it lies flat in the x–y plane." [pause: 4]
 
@@ -358,7 +358,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "These circles, cut into a torus, have a famous name: Villarceau circles — a classic puzzle that dissolves the moment you know they are Hopf fibers." [pause: 5.5]
 
-## S8 · 12:45–13:50
+## S8 · 11:56-13:00
 
 "Now, the whole structure at once. One line down the middle, and a stack of nested tori, every surface made of linked circles." [pause: 4]
 
@@ -368,7 +368,7 @@ Total wait time 697 s + animation time 152 s = **849 s = 14:09** (under the 15:0
 
 "Tilt the latitude of the base points, and the weaving shifts: the same circles, the same space, now flowing the other way. An entire four-dimensional rotation, visible in three. That is the Hopf fibration in full." [pause: 14]
 
-## S9 · 13:50–15:00
+## S9 · 13:00-14:09
 
 "Why does any of this matter?" [pause: 4]
 

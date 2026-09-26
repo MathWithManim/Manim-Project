@@ -32,13 +32,33 @@ print("1. plan.md — Stage 1 draft + Stage 2 audit + final revised plan")
 plan = read("plan.md")
 for stage in ("# STAGE 1", "# STAGE 2", "# STAGE 3"):
     check(f"contains {stage}", stage in plan)
-check("has 9 timestamped scene windows", len(re.findall(r"## S\d · \d:\d\d", plan)) == 9,
-      f"{len(re.findall(r'## S[0-9] · [0-9]+:[0-9]+', plan))} found")
 check("has VO transcript section", "VOICEOVER TRANSCRIPT" in plan)
 check("has budget verification table", "Budget verification" in plan)
 check("documents HUD architecture", "add_fixed_in_frame_mobjects" in plan)
 check("states the 15:00 cap", "15:00" in plan)
-check("runtime claim matches code (849 s)", "849" in plan)
+
+
+def to_seconds(stamp: str) -> int:
+    minutes, _, seconds = stamp.partition(":")
+    return int(minutes) * 60 + int(seconds)
+
+
+# Every "## Sn ... H:MM-H:MM" header, in file order: Stage 3 block then transcript.
+headers = re.findall(r"^## (S\d)\b.*?(\d{1,2}:\d{2})\D(\d{1,2}:\d{2})", plan, re.M)
+check("18 timestamped headers (9 in Stage 3 + 9 in transcript)", len(headers) == 18,
+      f"{len(headers)} found")
+
+if len(headers) == 18:
+    stage3, transcript = headers[:9], headers[9:]
+    check("Stage 3 and transcript agree on every window",
+          [(s, a, b) for s, a, b in stage3] == [(s, a, b) for s, a, b in transcript])
+    check("scene order is S1..S9", [s for s, _, _ in stage3] == [f"S{i}" for i in range(1, 10)])
+    contiguous = all(stage3[i][2] == stage3[i + 1][1] for i in range(8))
+    check("timeline is contiguous (no gaps or overlaps)", contiguous,
+          " -> ".join(f"{a}-{b}" for _, a, b in stage3))
+    check("timeline ends at 14:09 (849 s)", to_seconds(stage3[-1][2]) == 849,
+          stage3[-1][2])
+    check("timeline starts at 0:00", to_seconds(stage3[0][1]) == 0, stage3[0][1])
 
 # ---------------------------------------------------------------- deliverable 2
 print("\n2. manim.cfg — 2K60 CLI config")

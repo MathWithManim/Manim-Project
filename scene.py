@@ -37,7 +37,6 @@ from manim import (
     Line,
     Line3D,
     MathTex,
-    MoveAlongPath,
     Rectangle,
     ReplacementTransform,
     Sphere,
@@ -49,7 +48,6 @@ from manim import (
     ValueTracker,
     VMobject,
     always_redraw,
-    interpolate_color,
 )
 
 # --------------------------------------------------------------------------
@@ -1042,7 +1040,7 @@ the picture as subtitles.
 "Every point of S two has exactly one fiber over it. And every point of S three lies on exactly one fiber." [pause: 7]
 "So the whole of S three, four-dimensional and invisible, umbrellas out into a three-dimensional space completely filled with circles." [pause: 6]
 "Now, what happens when you pick two of them?" [pause: 6]
--- S6  7:47-10:00 --
+-- S6  7:47-10:01 --
 "Take two fibers. Two circles in space, belonging to two different base points." [pause: 4]
 "Here they are. Red and blue. Sitting apart." [pause: 5]
 "Now the moment you have been waiting for. Rotate one through the other. Remember. The base point on S two moves continuously, so the fiber moves continuously through all of space between." [pause: 7]
@@ -1059,7 +1057,7 @@ the picture as subtitles.
 "And we have not even seen the whole structure yet." [pause: 6]
 "Because the fibers do not just exist in isolation. They organize into tori." [pause: 6]
 "And one more beautiful fact. Fix any torus. It splits into two families of fibers. Red and blue. Every red circle links every blue circle exactly once. Circles of the same color sit side by side, never touching. Slide the red family around the blue direction, and each red circle flows into its neighbor. Until, after one full sweep, the entire torus is exactly where it started. That is the Clifford translation. A rotation of the four-dimensional sphere, seen as a perfect sliding of circles in space." [pause: 5.5]
--- S7  10:00-11:56 --
+-- S7  10:01-11:56 --
 "Now the whole structure at once. One line down the middle, and a stack of nested tori, every surface made of linked circles." [pause: 4]
 "Watch from far away. Let your eye follow the circles as they wrap around, and around." [pause: 5]
 "And now let them slide. The red family flows one way, the blue family flows the other. No circle ever crosses another circle of its own color. The torus is not spinning. It is being woven." [pause: 8]
