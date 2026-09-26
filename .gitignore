@@ -1,0 +1,25 @@
+# Manim build output
+media/
+partial_movie_files/
+
+# Narration pipeline intermediates
+padded/
+voice_timed.wav
+001.wav
+002.wav
+*.wav
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent session state
+.omo/

@@ -1,0 +1,161 @@
+name: render
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: render-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MANIM_VERSION: "0.21.0"
+  EXPECTED_DURATION: "849"
+
+jobs:
+  verify:
+    name: Verify logic and narration sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install manim
+        run: pip install "manim==$MANIM_VERSION"
+
+      - name: Byte-compile every module
+        run: python -m py_compile scene.py scene_no_vo.py build_narration.py check_scenes.py
+
+      - name: Run all nine scenes with rendering stubbed
+        run: python check_scenes.py
+
+      - name: Narration must match the code exactly
+        run: |
+          python build_narration.py
+          if ! git diff --exit-code -- narration.txt; then
+            echo "::error::narration.txt is stale. Run 'python build_narration.py' and commit the result."
+            exit 1
+          fi
+
+  render:
+    name: Render S${{ matrix.i }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system and TeX dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            dvisvgm \
+            fonts-dejavu-core \
+            libcairo2-dev \
+            libpango1.0-dev \
+            texlive \
+            texlive-fonts-extra \
+            texlive-latex-extra \
+            texlive-science
+
+      - name: Install manim
+        run: pip install "manim==$MANIM_VERSION"
+
+      - name: Render section S${{ matrix.i }} at 2560x1440 60fps
+        env:
+          HOPF_ONLY: "S${{ matrix.i }}"
+        run: |
+          manim render scene.py HopfFibrationScene --media_dir media
+          OUT="media/videos/scene/1440p60/HopfFibrationScene.mp4"
+          if [ ! -f "$OUT" ]; then
+            echo "::error::expected output not found at $OUT"
+            find media -name '*.mp4' || true
+            exit 1
+          fi
+          cp "$OUT" "S${{ matrix.i }}.mp4"
+
+      - name: Check the segment really is 2K60
+        run: |
+          set -euo pipefail
+          read -r W H RATE <<< "$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,r_frame_rate \
+            -of csv=p=0 "S${{ matrix.i }}.mp4")"
+          echo "segment: ${W}x${H} @ ${RATE}"
+          [ "$W" = "2560" ] || { echo "::error::width is $W, expected 2560"; exit 1; }
+          [ "$H" = "1440" ] || { echo "::error::height is $H, expected 1440"; exit 1; }
+          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE, expected 60/1"; exit 1; }
+
+      - name: Upload segment
+        uses: actions/upload-artifact@v4
+        with:
+          name: seg-S${{ matrix.i }}
+          path: S${{ matrix.i }}.mp4
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  assemble:
+    name: Assemble the 15-minute cut
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+          pattern: seg-S*
+          merge-multiple: false
+
+      - name: Concatenate in scene order
+        run: |
+          set -euo pipefail
+          : > list.txt
+          for i in $(seq 1 9); do
+            SEG="parts/seg-S$i/S$i.mp4"
+            [ -f "$SEG" ] || { echo "::error::missing segment $SEG"; exit 1; }
+            echo "file '$SEG'" >> list.txt
+          done
+          cat list.txt
+          ffmpeg -y -f concat -safe 0 -i list.txt -c copy hopf_fibration.mp4
+
+      - name: Verify the assembled movie
+        run: |
+          set -euo pipefail
+          read -r W H RATE <<< "$(ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,r_frame_rate \
+            -of csv=p=0 hopf_fibration.mp4)"
+          DUR=$(ffprobe -v error -show_entries format=duration \
+            -of csv=p=0 hopf_fibration.mp4)
+          echo "final: ${W}x${H} @ ${RATE}, ${DUR}s (expected ${EXPECTED_DURATION}s)"
+          [ "$W" = "2560" ] || { echo "::error::width is $W"; exit 1; }
+          [ "$H" = "1440" ] || { echo "::error::height is $H"; exit 1; }
+          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE"; exit 1; }
+          awk -v d="$DUR" -v want="$EXPECTED_DURATION" \
+            'BEGIN { diff = d - want; if (diff < 0) diff = -diff;
+                     if (diff > 2.0) { printf "::error::duration %.1fs drifts from %ss\n", d, want; exit 1 }
+                     printf "duration %.1fs is within 2s of %ss\n", d, want }'
+
+      - name: Upload final movie
+        uses: actions/upload-artifact@v4
+        with:
+          name: hopf-fibration-final
+          path: hopf_fibration.mp4
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

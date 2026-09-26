@@ -1,0 +1,9 @@
+# Normalize line endings so CI and local renders are byte-identical.
+* text=auto eol=lf
+
+# Binary assets that must never be line-ending mangled
+*.mp4 binary
+*.wav binary
+*.png binary
+*.ttf binary
+*.otf binary
