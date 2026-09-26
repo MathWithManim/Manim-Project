@@ -749,17 +749,6 @@ def frame_14() -> VGroup:
     return stage_fit(grp)
 
 
-    def finish(self, frame_mobject: Mobject, *extras: Mobject) -> None:
-        drops = [FadeOut(m) for m in extras if m in self.mobjects]
-        body = [m for m in self.mobjects if m not in extras]
-        anims = drops + ([FadeTransform(body[0], frame_mobject)] if body
-                         else [FadeIn(frame_mobject)])
-        self.play(*anims, run_time=0.8)
-        self.wait(0.6)
-
-    def close_beat(self) -> None:
-        TIMINGS.append((type(self).__name__, float(self.renderer.time)))
-
 
 FRAME_BUILDERS = {
     "S0": frame_00,
@@ -1357,12 +1346,21 @@ class Gaokao22Scene(Scene):
             self.pause(dur)
 
     def finish(self, target: Mobject, *extras: Mobject) -> None:
-        """Retire the working mobjects and leave exactly ``target`` on screen."""
+        """Retire the working mobjects and leave exactly ``target`` on screen.
+
+        Deliberately avoids the Transform family. Transform.clean_up_from_scene
+        calls ``self.mobject[0].restore()``, and Mobject.become() then invokes
+        interpolate_color on every family member. That method is abstract on
+        Mobject and only implemented for VMobject, ImageMobject and
+        PointCloudMobject, so transforming a container mobject raises
+        "Please override in a child class" at cleanup time. Fading out and
+        adding is visually equivalent here and cannot hit that path.
+        """
         drops = [FadeOut(m) for m in extras if m in self.mobjects]
-        body = [m for m in self.mobjects if m not in extras]
-        anims = drops + ([FadeTransform(body[0], target)] if body
-                         else [FadeIn(target)])
-        self.play(*anims, run_time=0.8)
+        body = [FadeOut(m) for m in self.mobjects if m not in extras]
+        if drops or body:
+            self.play(*drops, *body, run_time=0.8)
+        self.add(target)
         self.wait(0.6)
 
     def construct(self) -> None:
@@ -1626,7 +1624,7 @@ class Gaokao22Scene(Scene):
         sub = MathTex(r"\sqrt[3]{8}=2\qquad\Longrightarrow\qquad A+B+C\ \ge\ 3\cdot2=6",
                       font_size=44, color=AMBER)
         sub.move_to([0.0, -0.95, 0.0])
-        self.play(TransformMatchingTex(main, sub), run_time=1.6)
+        self.play(FadeOut(main, shift=UP * 0.18), FadeIn(sub), run_time=1.1)
         self.say("s06.b4")
         note6 = Text("remember the 6 — it appears twice, and it earns its keep twice",
                      font_size=FS_LABEL, color=MUTED)
@@ -1805,14 +1803,19 @@ class Gaokao22Scene(Scene):
         self.play(FadeOut(working), LaggedStart(*[FadeIn(c) for c in chips],
                                                lag_ratio=0.18), run_time=1.1)
         self.say("s11.b2")
-        perm = AnimationGroup(
-            Transform(chips[0], chips[2].copy()),
-            Transform(chips[1], chips[0].copy()),
-            Transform(chips[2], chips[1].copy()),
-            run_time=1.0,
-        )
-        self.play(perm, run_time=1.0)
-        self.play(Transform(chips[0], chips[0].copy()), run_time=0.1)
+        sorted_chips = VGroup(*[
+            VGroup(
+                RoundedRectangle(corner_radius=0.14, width=1.5, height=1.5,
+                                 stroke_color=BLUE, stroke_width=2.4,
+                                 fill_color=BLUE, fill_opacity=0.12),
+                MathTex(nm, font_size=44, color=BLUE),
+            )
+            for nm in ("A", "B", "C")
+        ])
+        for i, chip in enumerate(sorted_chips):
+            chip.move_to([-3.1 + 3.1 * i, 1.55, 0.0])
+        self.play(*[FadeOut(c) for c in chips], FadeIn(sorted_chips), run_time=0.9)
+        chips.become(sorted_chips)
         swapnote = Text("the expression cannot tell them apart", font_size=FS_MICRO,
                         color=MUTED)
         swapnote.next_to(chips, DOWN, buff=0.24)
