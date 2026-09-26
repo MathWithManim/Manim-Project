@@ -94,21 +94,6 @@ jobs:
             texlive-latex-extra \
             texlive-science
 
-      - name: Install system and TeX dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            dvisvgm \
-            fonts-dejavu-core \
-            libcairo2-dev \
-            libpango1.0-dev \
-            texlive \
-            texlive-fonts-extra \
-            texlive-latex-extra \
-            texlive-science
-
       - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
