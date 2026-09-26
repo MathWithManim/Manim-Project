@@ -111,7 +111,7 @@ jobs:
           compression-level: 0
 
   assemble:
-    name: Assemble the 15-minute cut
+    name: Concatenate into one movie
     needs: render
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -122,19 +122,43 @@ jobs:
           pattern: seg-S*
           merge-multiple: false
 
-      - name: Concatenate in scene order
+      - name: Collect the nine segments in scene order
+        run: |
+          set -euo pipefail
+          mkdir -p ordered
+          for i in $(seq 1 9); do
+            SRC=$(find "parts/seg-S$i" -name "S$i.mp4" -type f | head -n 1 || true)
+            if [ -z "$SRC" ]; then
+              echo "::error::segment S$i never arrived"
+              ls -R parts || true
+              exit 1
+            fi
+            cp "$SRC" "ordered/$i.mp4"
+            printf 'S%s  %8s bytes  %s\n' "$i" "$(stat -c%s "ordered/$i.mp4")" "$SRC"
+          done
+
+      - name: Join into hopf_fibration.mp4
         run: |
           set -euo pipefail
           : > list.txt
           for i in $(seq 1 9); do
-            SEG="parts/seg-S$i/S$i.mp4"
-            [ -f "$SEG" ] || { echo "::error::missing segment $SEG"; exit 1; }
-            echo "file '$SEG'" >> list.txt
+            echo "file 'ordered/$i.mp4'" >> list.txt
           done
+          echo "--- concat list ---"
           cat list.txt
-          ffmpeg -y -f concat -safe 0 -i list.txt -c copy hopf_fibration.mp4
+          echo "-------------------"
+          if ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -c copy hopf_fibration.mp4; then
+            echo "joined with stream copy (no quality loss)"
+          else
+            echo "::warning::stream copy failed, falling back to re-encode"
+            ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt \
+              -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 \
+              -c:a aac -b:a 192k \
+              hopf_fibration.mp4
+          fi
+          ls -lh hopf_fibration.mp4
 
-      - name: Verify the assembled movie
+      - name: Verify the joined movie
         run: |
           set -euo pipefail
           read -r W H RATE <<< "$(ffprobe -v error -select_streams v:0 \
@@ -142,14 +166,29 @@ jobs:
             -of csv=p=0 hopf_fibration.mp4)"
           DUR=$(ffprobe -v error -show_entries format=duration \
             -of csv=p=0 hopf_fibration.mp4)
-          echo "final: ${W}x${H} @ ${RATE}, ${DUR}s (expected ${EXPECTED_DURATION}s)"
-          [ "$W" = "2560" ] || { echo "::error::width is $W"; exit 1; }
-          [ "$H" = "1440" ] || { echo "::error::height is $H"; exit 1; }
-          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE"; exit 1; }
+          VCOUNT=$(ffprobe -v error -select_streams v -show_entries stream=codec_type \
+            -of csv=p=0 hopf_fibration.mp4 | wc -l)
+          echo "final: ${W}x${H} @ ${RATE}, ${DUR}s, ${VCOUNT} video stream(s)"
+          [ "$W" = "2560" ] || { echo "::error::width is $W, expected 2560"; exit 1; }
+          [ "$H" = "1440" ] || { echo "::error::height is $H, expected 1440"; exit 1; }
+          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE, expected 60/1"; exit 1; }
+          [ "$VCOUNT" = "1" ] || { echo "::error::expected exactly 1 video stream, got $VCOUNT"; exit 1; }
           awk -v d="$DUR" -v want="$EXPECTED_DURATION" \
             'BEGIN { diff = d - want; if (diff < 0) diff = -diff;
                      if (diff > 2.0) { printf "::error::duration %.1fs drifts from %ss\n", d, want; exit 1 }
-                     printf "duration %.1fs is within 2s of %ss\n", d, want }'
+                     printf "duration %.1fs matches the %ss script\n", d, want }'
+          {
+            echo "## Hopf fibration render"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Resolution | ${W}x${H} |"
+            echo "| Frame rate | ${RATE} |"
+            echo "| Duration | ${DUR}s |"
+            echo "| Size | $(du -h hopf_fibration.mp4 | cut -f1) |"
+            echo
+            echo "Grab it from the **hopf-fibration-final** artifact at the bottom of this run."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload final movie
         uses: actions/upload-artifact@v4
