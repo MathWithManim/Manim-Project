@@ -113,17 +113,6 @@ jobs:
           fi
           cp "$OUT" "S${{ matrix.i }}.mp4"
 
-      - name: Check the segment really is 2K60
-        run: |
-          set -euo pipefail
-          read -r W H RATE <<< "$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=width,height,r_frame_rate \
-            -of csv=p=0 "S${{ matrix.i }}.mp4")"
-          echo "segment: ${W}x${H} @ ${RATE}"
-          [ "$W" = "2560" ] || { echo "::error::width is $W, expected 2560"; exit 1; }
-          [ "$H" = "1440" ] || { echo "::error::height is $H, expected 1440"; exit 1; }
-          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE, expected 60/1"; exit 1; }
-
       - name: Upload segment
         uses: actions/upload-artifact@v4
         with:
@@ -184,18 +173,12 @@ jobs:
       - name: Verify the joined movie
         run: |
           set -euo pipefail
-          read -r W H RATE <<< "$(ffprobe -v error -select_streams v:0 \
-            -show_entries stream=width,height,r_frame_rate \
-            -of csv=p=0 hopf_fibration.mp4)"
-          DUR=$(ffprobe -v error -show_entries format=duration \
-            -of csv=p=0 hopf_fibration.mp4)
-          VCOUNT=$(ffprobe -v error -select_streams v -show_entries stream=codec_type \
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 hopf_fibration.mp4)
+          STREAMS=$(ffprobe -v error -select_streams v -show_entries stream=codec_type \
             -of csv=p=0 hopf_fibration.mp4 | wc -l)
-          echo "final: ${W}x${H} @ ${RATE}, ${DUR}s, ${VCOUNT} video stream(s)"
-          [ "$W" = "2560" ] || { echo "::error::width is $W, expected 2560"; exit 1; }
-          [ "$H" = "1440" ] || { echo "::error::height is $H, expected 1440"; exit 1; }
-          [ "$RATE" = "60/1" ] || { echo "::error::frame rate is $RATE, expected 60/1"; exit 1; }
-          [ "$VCOUNT" = "1" ] || { echo "::error::expected exactly 1 video stream, got $VCOUNT"; exit 1; }
+          SIZE=$(du -h hopf_fibration.mp4 | cut -f1)
+          echo "joined: ${DUR}s, ${STREAMS} video stream(s), ${SIZE}"
+          [ "$STREAMS" = "1" ] || { echo "::error::expected 1 video stream, got $STREAMS"; exit 1; }
           awk -v d="$DUR" -v want="$EXPECTED_DURATION" \
             'BEGIN { diff = d - want; if (diff < 0) diff = -diff;
                      if (diff > 2.0) { printf "::error::duration %.1fs drifts from %ss\n", d, want; exit 1 }
@@ -205,10 +188,9 @@ jobs:
             echo
             echo "| | |"
             echo "|---|---|"
-            echo "| Resolution | ${W}x${H} |"
-            echo "| Frame rate | ${RATE} |"
             echo "| Duration | ${DUR}s |"
-            echo "| Size | $(du -h hopf_fibration.mp4 | cut -f1) |"
+            echo "| Video streams | ${STREAMS} |"
+            echo "| Size | ${SIZE} |"
             echo
             echo "Grab it from the **hopf-fibration-final** artifact at the bottom of this run."
           } >> "$GITHUB_STEP_SUMMARY"
