@@ -1,0 +1,5 @@
+# Pinned so local and CI renders are identical.
+# Manim pulls in numpy, pillow, scipy etc. transitively; only the two direct
+# dependencies that affect output are pinned here.
+manim==0.21.0
+numpy==2.5.3
