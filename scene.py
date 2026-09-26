@@ -87,6 +87,14 @@ SPHERE_R = 0.45
 PLANE_Z = -1.05
 POLE_TO_PLANE = SPHERE_R - PLANE_Z  # 1.5
 
+# Tessellation. Cairo shades per face, so low resolution reads as visible
+# triangles on curved surfaces; Manim's own default is 32, which is not enough
+# for shapes this large on screen. (u, v) = steps around the ring, then around
+# the tube. Raise these for still smoother surfaces, at a linear render cost.
+TORUS_RESOLUTION = (120, 60)
+SPHERE_RESOLUTION = (56, 36)
+SPHERE_RESOLUTION_SMALL = (36, 24)
+
 # scene name -> (duration, animation total, ordered narration waits)
 SCENE_BUDGET: dict[str, tuple[float, float, list[float]]] = {
     "S1": (50.0, 19.0, [3.0, 3.0, 2.0, 3.0, 10.0, 4.0, 6.0]),
@@ -137,7 +145,9 @@ def torus_pair(theta: float) -> tuple[float, float]:
 def torus_bundle(theta: float, color: str) -> tuple[Torus, VGroup]:
     """Clifford torus at latitude theta plus eight fibers woven over it."""
     major, minor = torus_pair(theta)
-    shell = Torus(major_radius=major, minor_radius=minor, resolution=(64, 20))
+    shell = Torus(
+        major_radius=major, minor_radius=minor, resolution=TORUS_RESOLUTION
+    )
     shell.set_fill(color, opacity=0.12)
     shell.set_stroke(color, 2.4)
     shell.set_shade_in_3d(True)
@@ -295,7 +305,7 @@ class HopfFibrationScene(ThreeDScene):
         self.play(FadeIn(label_one), run_time=1.0)
         self.pause(7.0)
 
-        shell = Sphere(radius=1.5, resolution=(24, 14))
+        shell = Sphere(radius=1.5, resolution=SPHERE_RESOLUTION)
         shell.set_fill(CYAN, opacity=0.08)
         shell.set_stroke(CYAN, 1.6)
         shell.set_shade_in_3d(True)
@@ -421,7 +431,7 @@ class HopfFibrationScene(ThreeDScene):
         self.pause(7.0)
 
         # -- the real thing, in 3D ------------------------------------
-        globe = Sphere(radius=SPHERE_R, resolution=(18, 12))
+        globe = Sphere(radius=SPHERE_R, resolution=SPHERE_RESOLUTION)
         globe.set_fill(CYAN, opacity=0.10)
         globe.set_stroke(CYAN, 1.4)
         globe.set_shade_in_3d(True)
@@ -589,7 +599,7 @@ class HopfFibrationScene(ThreeDScene):
         self.pause(5.0)
 
         base_center = np.array([-3.4, 1.1, 0.0])
-        base_sphere = Sphere(radius=0.6, resolution=(16, 12))
+        base_sphere = Sphere(radius=0.6, resolution=SPHERE_RESOLUTION_SMALL)
         base_sphere.move_to(base_center)
         base_sphere.set_fill(MINT, opacity=0.12)
         base_sphere.set_stroke(MINT, 1.2)
@@ -877,7 +887,7 @@ class HopfFibrationScene(ThreeDScene):
                 Torus(
                     major_radius=target_major,
                     minor_radius=target_minor,
-                    resolution=(64, 20),
+                    resolution=TORUS_RESOLUTION,
                 )
                 for _ in range(4)
             ]
