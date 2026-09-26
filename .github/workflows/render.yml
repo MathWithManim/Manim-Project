@@ -10,66 +10,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MANIM_VERSION: "0.21.0"
-  EXPECTED_DURATION: "849"
+  SECTION_COUNT: "27"
+  NARRATION_FLOOR: "930"
 
 jobs:
   verify:
-    name: Verify logic and narration sync
+    name: Verify logic, layout, transcript and maths
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install system and TeX dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            dvisvgm \
-            fonts-dejavu-core \
-            libcairo2-dev \
-            libpango1.0-dev \
-            texlive \
-            texlive-fonts-extra \
-            texlive-latex-extra \
-            texlive-science
-
-      - name: Install pinned dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -c "import manim, numpy; print('manim', manim.__version__, '/ numpy', numpy.__version__)"
-
-      - name: Byte-compile every module
-        run: python -m py_compile scene.py scene_no_vo.py build_narration.py check_scenes.py
-
-      - name: Run all nine scenes with rendering stubbed
-        run: python check_scenes.py
-
-      - name: Narration must match the code exactly
-        run: |
-          python build_narration.py
-          if ! git diff --exit-code -- narration.txt; then
-            echo "::error::narration.txt is stale. Run 'python build_narration.py' and commit the result."
-            exit 1
-          fi
-
-  render:
-    name: Render S${{ matrix.i }}
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 300
-    strategy:
-      fail-fast: false
-      matrix:
-        i: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -100,106 +48,183 @@ jobs:
           python -m pip install -r requirements.txt
           python -c "import manim, numpy; print('manim', manim.__version__, '/ numpy', numpy.__version__)"
 
-      - name: Render section S${{ matrix.i }} at 2560x1440 60fps
-        env:
-          HOPF_ONLY: "S${{ matrix.i }}"
+      - name: Byte-compile every module
+        run: python -m py_compile scene.py scene_no_vo.py check_scenes.py build_narration.py audit_deliverables.py verification/verify_math.py
+
+      - name: Every inequality in the proof holds on a grid
+        run: python verification/verify_math.py
+
+      - name: Every section runs and every closing picture fits the frame
+        run: python check_scenes.py
+
+      - name: Deliverables match the brief
+        run: python audit_deliverables.py
+
+      - name: The caption cut must render too
         run: |
-          manim render scene.py HopfFibrationScene --media_dir media
-          OUT="media/videos/scene/1440p60/HopfFibrationScene.mp4"
-          if [ ! -f "$OUT" ]; then
-            echo "::error::expected output not found at $OUT"
+          GAOKAO_ONLY=S9 python -c "
+          import os, scene_no_vo
+          s = scene_no_vo.Gaokao22Scene()
+          s._pause_log = [[]]
+          s.play = lambda *a, **k: None
+          s.wait = lambda t: None
+          s.run_section('S9')
+          print('caption cut OK, CAPTIONS =', scene_no_vo.production.CAPTIONS)
+          assert scene_no_vo.production.CAPTIONS
+          "
+
+      - name: Narration must match the code exactly
+        run: |
+          python build_narration.py
+          if ! git diff --exit-code -- narration.txt; then
+            echo "::error::narration.txt is stale. Run 'python build_narration.py' and commit the result."
+            exit 1
+          fi
+
+  render:
+    name: Render ${{ matrix.variant }} S${{ matrix.i }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+        variant: [vo, captions]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system and TeX dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            ffmpeg \
+            dvisvgm \
+            fonts-dejavu-core \
+            libcairo2-dev \
+            libpango1.0-dev \
+            texlive \
+            texlive-fonts-extra \
+            texlive-latex-extra \
+            texlive-science
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Render section S${{ matrix.i }}
+        env:
+          GAOKAO_ONLY: "S${{ matrix.i }}"
+          VARIANT: "${{ matrix.variant }}"
+        run: |
+          set -euo pipefail
+          if [ "$VARIANT" = "captions" ]; then
+            manim render scene_no_vo.py Gaokao22Scene --media_dir media
+          else
+            manim render scene.py Gaokao22Scene --media_dir media
+          fi
+          OUT=$(find media -name 'Gaokao22Scene.mp4' -type f | head -n 1)
+          if [ -z "$OUT" ]; then
+            echo "::error::no output produced for $VARIANT S${{ matrix.i }}"
             find media -name '*.mp4' || true
             exit 1
           fi
           cp "$OUT" "S${{ matrix.i }}.mp4"
+          ls -lh "S${{ matrix.i }}.mp4"
 
-      - name: Upload segment
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: seg-S${{ matrix.i }}
+          name: seg-${{ matrix.variant }}-S${{ matrix.i }}
           path: S${{ matrix.i }}.mp4
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
   assemble:
-    name: Concatenate into one movie
+    name: Assemble ${{ matrix.variant }}
     needs: render
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [vo, captions]
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: parts
-          pattern: seg-S*
+          pattern: seg-${{ matrix.variant }}-S*
           merge-multiple: false
 
-      - name: Collect the nine segments in scene order
+      - name: Collect the sections in order
         run: |
           set -euo pipefail
           mkdir -p ordered
-          for i in $(seq 1 9); do
-            SRC=$(find "parts/seg-S$i" -name "S$i.mp4" -type f | head -n 1 || true)
+          for i in $(seq 1 "$SECTION_COUNT"); do
+            SRC=$(find "parts/seg-${{ matrix.variant }}-S$i" -name "S$i.mp4" -type f | head -n 1 || true)
             if [ -z "$SRC" ]; then
-              echo "::error::segment S$i never arrived"
+              echo "::error::section S$i never arrived for ${{ matrix.variant }}"
               ls -R parts || true
               exit 1
             fi
-            cp "$SRC" "ordered/$i.mp4"
-            printf 'S%s  %8s bytes  %s\n' "$i" "$(stat -c%s "ordered/$i.mp4")" "$SRC"
+            cp "$SRC" "ordered/$(printf '%02d' "$i").mp4"
           done
 
-      - name: Join into hopf_fibration.mp4
+      - name: Join
         run: |
           set -euo pipefail
           : > list.txt
-          for i in $(seq 1 9); do
-            echo "file 'ordered/$i.mp4'" >> list.txt
-          done
-          echo "--- concat list ---"
+          for f in ordered/*.mp4; do echo "file '$f'" >> list.txt; done
           cat list.txt
-          echo "-------------------"
-          if ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -c copy hopf_fibration.mp4; then
+          if ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -c copy out.mp4; then
             echo "joined with stream copy (no quality loss)"
           else
-            echo "::warning::stream copy failed, falling back to re-encode"
+            echo "::warning::stream copy failed, re-encoding"
             ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt \
-              -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 \
-              -c:a aac -b:a 192k \
-              hopf_fibration.mp4
+              -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 out.mp4
           fi
-          ls -lh hopf_fibration.mp4
 
       - name: Verify the joined movie
         run: |
           set -euo pipefail
-          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 hopf_fibration.mp4)
-          STREAMS=$(ffprobe -v error -select_streams v -show_entries stream=codec_type \
-            -of csv=p=0 hopf_fibration.mp4 | wc -l)
-          SIZE=$(du -h hopf_fibration.mp4 | cut -f1)
-          echo "joined: ${DUR}s, ${STREAMS} video stream(s), ${SIZE}"
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
+          STREAMS=$(ffprobe -v error -select_streams v -show_entries stream=codec_type -of csv=p=0 out.mp4 | wc -l)
+          SIZE=$(du -h out.mp4 | cut -f1)
+          NAME=gaokao22-${{ matrix.variant }}.mp4
+          mv out.mp4 "$NAME"
+          echo "$NAME: ${DUR}s, ${STREAMS} video stream(s), ${SIZE}"
           [ "$STREAMS" = "1" ] || { echo "::error::expected 1 video stream, got $STREAMS"; exit 1; }
-          awk -v d="$DUR" -v want="$EXPECTED_DURATION" \
-            'BEGIN { diff = d - want; if (diff < 0) diff = -diff;
-                     if (diff > 2.0) { printf "::error::duration %.1fs drifts from %ss\n", d, want; exit 1 }
-                     printf "duration %.1fs matches the %ss script\n", d, want }'
+          awk -v d="$DUR" -v floor="$NARRATION_FLOOR" '
+            BEGIN {
+              if (d < floor) { printf "::error::%.1fs is shorter than the %.0fs narration floor\n", d, floor; exit 1 }
+              if (d > floor * 1.6) { printf "::error::%.1fs is far longer than expected (floor %.0fs)\n", d, floor; exit 1 }
+              printf "%.1fs total, %.1fs of it narration, %.1fs of animation\n", d, floor, d - floor
+            }'
           {
-            echo "## Hopf fibration render"
+            echo "## ${{ matrix.variant }} cut"
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| Duration | ${DUR}s |"
+            echo "| Narration floor | ${NARRATION_FLOOR}s |"
             echo "| Video streams | ${STREAMS} |"
             echo "| Size | ${SIZE} |"
             echo
-            echo "Grab it from the **hopf-fibration-final** artifact at the bottom of this run."
+            echo "Grab **$NAME** from the \`gaokao22-${{ matrix.variant }}\` artifact at the bottom of this run."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload final movie
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: hopf-fibration-final
-          path: hopf_fibration.mp4
+          name: gaokao22-${{ matrix.variant }}
+          path: gaokao22-${{ matrix.variant }}.mp4
           if-no-files-found: error
           retention-days: 30
           compression-level: 0

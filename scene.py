@@ -1,18 +1,21 @@
-"""THE HOPF FIBRATION -- 15-minute Manim CE production scene.
+"""2008 Jiangxi Gaokao Q22 - a 17-minute connected 2D proof of  1 < f < 2.
 
-Deliverable 3 of 4. Render with:
-    manim render scene.py HopfFibrationScene
+    f(x,a) = 1/sqrt(1+x) + 1/sqrt(1+a) + sqrt(ax/(ax+8)),    x, a > 0
 
-Conventions enforced by this module
------------------------------------
-* one class, nine ``next_section`` markers -> CI renders S1..S9 independently
-* every ``self.pause(x)`` is exactly one narration pause; ``SCENE_BUDGET`` locks
-  the per-scene animation total and the ordered wait list, and ``construct``
-  asserts both, so the plan and the movie cannot drift apart
-* total runtime is asserted to 900 s (15:00)
-* fonts are capped by the header / formula / note helpers (36 / 28 / 20)
-* HUD elements go through ``carded`` -> translucent card, fixed in frame
-* 3D geometry stays inside the radius-2.6 ball; see ``SAFE_THETA_MAX``
+One Scene class, twenty-seven ``next_section`` markers, so CI renders each
+section independently via ``GAOKAO_ONLY=...``.  ``pause`` is the narration clock:
+its sequence is recorded, asserted against NARRATION at the end of the render,
+and mined by build_narration.py to emit narration.txt, so the transcript cannot
+drift away from the movie.
+
+Continuity: the first frame of every section is the last frame of the one before
+it.  ``frame_of`` rebuilds that closing picture from scratch, which keeps each
+handoff pixel-identical and every section independently renderable.
+
+Set ``GAOKAO_CAPTIONS=1`` (see scene_no_vo.py) to burn the same transcript onto
+the screen as a caption bar instead of leaving it to narration.
+
+Every inequality shown here is machine-checked by verification/verify_math.py.
 """
 
 from __future__ import annotations
@@ -20,1071 +23,2402 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from manim import (
-    DEGREES,
-    PI,
-    TAU,
-    WHITE,
-    BackgroundRectangle,
-    Circle,
-    Create,
-    Dot,
-    Dot3D,
-    FadeIn,
-    FadeOut,
-    Indicate,
-    LaggedStart,
-    Line,
-    Line3D,
-    MathTex,
-    Rectangle,
-    ReplacementTransform,
-    Sphere,
-    Text,
-    ThreeDScene,
-    Torus,
-    Transform,
-    VGroup,
-    ValueTracker,
-    VMobject,
-    always_redraw,
-)
+from manim import *
 
-# --------------------------------------------------------------------------
-# palette
-# --------------------------------------------------------------------------
-CYAN = "#5AC8FA"
-GOLD = "#FFD166"
+
+BG = "#0B0E14"
+CARD = "#121722"
+INK = "#F2F4F8"
+MUTED = "#8B95A5"
+GRID = "#2A3140"
+BLUE = "#4C8DFF"
+TEAL = "#2DD4A7"
+AMBER = "#FFC24B"
 CORAL = "#FF6B6B"
-SKY = "#4DABF7"
-MINT = "#4CD97B"
-LILAC = "#C792EA"
-ROSE = "#F78C6C"
-DIM = "#9DA7B3"
+VIOLET = "#A78BFA"
 
-# Pinned so local renders and CI renders match. CI installs fonts-dejavu-core.
-# Windows usually lacks it, so override per machine instead of editing code:
-#   set HOPF_FONT=Arial
-# Pango falls back rather than failing if the font is missing, but the warning
-# it prints ("expect ugly") means the local preview no longer matches CI.
-FONT = os.environ.get("HOPF_FONT", "DejaVu Sans")
+# ---------------------------------------------------------------------------
+# layout grid - nothing is ever placed outside these bounds
+# ---------------------------------------------------------------------------
+FRAME_W = 14.222
+FRAME_H = 8.0
+SAFE_X = 6.95
+SAFE_Y = 3.75
+HEADER_Y = 3.20
+STAGE_TOP = 2.80
+STAGE_BOT = -2.45
+STAGE_CY = (STAGE_TOP + STAGE_BOT) / 2.0
+CAPTION_Y = -3.12
+CAPTION_W = 13.0
 
-# --------------------------------------------------------------------------
-# mathematics
-# --------------------------------------------------------------------------
-# stereographic image (1 - x4)^-1 * (x1, x2, x3) of the Hopf fiber over
-# (theta, phi) in S^2;  t parameterises the fiber, 0 <= t < TAU.
-#
-# radius bound: max |X| = (1 + sin(theta/2)) / cos(theta/2)
-#                         = tan(pi/4 + theta/4) <= 2.6
-#                         <=> theta <= 1.669 rad
-SAFE_THETA_MAX = 1.6
+FS_TITLE = 34
+FS_HERO = 50
+FS_WORK = 40
+FS_LABEL = 24
+FS_CAPTION = 27
+FS_MICRO = 21
 
-GROUND_Y = -1.9
-SPHERE_R = 0.45
-PLANE_Z = -1.05
-POLE_TO_PLANE = SPHERE_R - PLANE_Z  # 1.5
+CAPTIONS = bool(int(os.environ.get("GAOKAO_CAPTIONS", "0")))
+ONLY = os.environ.get("GAOKAO_ONLY")
+SECTION_COUNT = 27
 
-# Tessellation. Cairo shades per face, so low resolution reads as visible
-# triangles on curved surfaces; Manim's own default is 32, which is not enough
-# for shapes this large on screen. (u, v) = steps around the ring, then around
-# the tube. Raise these for still smoother surfaces, at a linear render cost.
-TORUS_RESOLUTION = (120, 60)
-SPHERE_RESOLUTION = (56, 36)
-SPHERE_RESOLUTION_SMALL = (36, 24)
+PHI = lambda t: 1.0 / np.sqrt(1.0 + t)
+F2 = lambda x, a: PHI(x) + PHI(a) + np.sqrt(a * x / (a * x + 8.0))
 
-# scene name -> (duration, animation total, ordered narration waits)
-SCENE_BUDGET: dict[str, tuple[float, float, list[float]]] = {
-    "S1": (50.0, 19.0, [3.0, 3.0, 2.0, 3.0, 10.0, 4.0, 6.0]),
-    "S2": (92.0, 20.0, [3.0, 3.0, 7.0, 6.0, 6.0, 7.0, 7.0, 6.0, 7.0, 7.0, 6.0, 7.0]),
-    "S3": (119.0, 23.0, [4.0, 7.0, 7.0, 7.0, 7.0, 7.0, 8.0, 9.0, 7.0, 7.0, 7.0, 7.0, 6.0, 6.0]),
-    "S4": (97.5, 15.0, [5.0, 6.0, 7.0, 7.0, 7.0, 8.0, 7.0, 8.0, 7.0, 6.0, 6.0, 4.0, 4.5]),
-    "S5": (109.0, 19.0, [4.0, 5.0, 7.0, 7.0, 8.0, 8.0, 8.0, 7.0, 7.0, 7.0, 7.0, 6.0, 6.0, 3.0]),
-    "S6": (133.5, 16.0, [4.0, 5.0, 7.0, 8.0, 8.0, 9.0, 9.0, 9.0, 9.0, 9.0, 8.0, 7.0, 6.0, 6.0, 5.5, 8.0]),
-    "S7": (115.5, 20.0, [4.0, 5.0, 8.0, 9.0, 10.0, 10.0, 9.0, 9.0, 8.0, 7.0, 6.0, 5.0, 5.5]),
-    "S8": (64.0, 10.0, [4.0, 6.0, 30.0, 14.0]),
-    "S9": (68.5, 10.0, [4.0, 5.0, 7.0, 7.0, 7.0, 7.0, 6.0, 6.0, 5.0, 4.5]),
+# ---------------------------------------------------------------------------
+# transcript - single source of truth for wording and timing
+# ---------------------------------------------------------------------------
+BEATS: dict[str, tuple[str, float]] = {
+    's01.b1': ('Here is a problem twenty thousandth of a million Chinese students met in 2008. Most handed in a blank page.', 7.0),
+    's01.b2': ('Prove that for every x and a greater than zero, this expression is trapped between one and two.', 6.3),
+    's01.b3': ('I will take it apart completely. Nothing skipped, nothing assumed.', 3.5),
+    's01.b4': ('Seventeen minutes. Twenty seven scenes. Every step on screen.', 3.2),
+    's01.b5': ('First we build the toolkit, because the proof leans on four ideas.', 4.2),
+    's01.b6': ('The function, the integral, the arithmetic geometric mean, and Cauchy Schwarz. Here we go.', 4.9),
+    's02.b1': ('Before attacking it, let me show you why the obvious attack does not work.', 4.9),
+    's02.b2': ('Push x right. The blue term collapses. The purple term climbs to meet it.', 4.9),
+    's02.b3': ('Two terms, one variable, opposite directions. No single monotonicity to exploit.', 3.9),
+    's02.b4': ('That is the whole difficulty. It is not that the algebra is ugly. It is that the terms are fighting each other.', 7.7),
+    's02.b5': ('So we need a substitution that makes them stop fighting.', 3.5),
+    's03.b1': ('Our whole problem lives inside one function. Let us meet it.', 3.9),
+    's03.b2': ('Phi of t equals one over square root of one plus t, for t positive.', 5.3),
+    's03.b3': ('Two facts matter. It never exceeds one, because the square root of one plus t is at least one.', 6.7),
+    's03.b4': ('And it decreases, but slowly. It dies like one over the square root of t, and slow decay is what makes this dangerous.', 8.1),
+    's03.b5': ('Keep that picture. A function that starts at one and dies slowly is hard to sum.', 5.6),
+    's04.b1': ('Why care about area? Because comparisons of area prove inequalities with no algebra.', 4.6),
+    's04.b2': ('An integral is accumulated area, built from rectangles. Twice as many, four, eight, sixteen.', 4.9),
+    's04.b3': ('In the limit the rectangles become the region, and the region becomes a number: the integral.', 5.6),
+    's04.b2b': ('The integral of one over square root of one plus t, from zero to one, is two root two minus one.', 7.4),
+    's04.b4': ('That is zero point eight two eight. The whole region fits strictly under the line y equals one.', 6.3),
+    's04.b5': ('Phi never reaches its own starting height. Hold that thought. We are about to trade the square root away, and this picture tells us which way.', 9.0),
+    's05.b1': ('Tool number one. I am not going to assume it. Let us prove it.', 4.9),
+    's05.b2': ('Geometrically: in a right triangle, the altitude to the hypotenuse is at most half of it.', 5.6),
+    's05.b3': ('Drop the altitude. It splits the hypotenuse into a and b, and its square is a times b.', 6.3),
+    's05.b4': ('So root a b is at most a plus b over two. There is the arithmetic geometric mean, by geometry.', 7.0),
+    's05.b5': ('Now prove it with calculus, because I want to be pedantic. Consider t plus one over t.', 6.0),
+    's05.b6': ('Its minimum is at t equals one, and that minimum is two. Rearranged, a plus b is at least two root a b.', 8.1),
+    's05.b7': ('Same inequality, two proofs. We need the three variable version.', 3.5),
+    's06.b1': ('The three variable form: A plus B plus C is at least three times the cube root of A B C.', 7.4),
+    's06.b2': ('Equality exactly when A equals B equals C.', 2.8),
+    's06.b3': ('Now plug in the constraint. The cube root of eight is two.', 4.2),
+    's06.b4': ('Three times two is six. Remember the six. It appears twice in this proof, and both times it does real work.', 7.4),
+    's07.b1': ('Tool number two. Convexity.', 2.2),
+    's07.b2': ('A function is convex when its graph bends upward. The second derivative is positive, and ours always is.', 6.3),
+    's07.b3': ('The consequence I want: a convex function lies above every one of its tangent lines. Draw any tangent, and the curve is above it everywhere.', 8.8),
+    's07.b4': ('And as t goes to zero, Phi goes to one. From below. It never touches it.', 5.6),
+    's07.b5': ('That limit is not attained. Remember it, because at the end I will show you the same thing happens to the whole sum.', 8.1),
+    's08.b1': ('Tool number three. Cauchy Schwarz.', 2.2),
+    's08.b2': ('Project u onto v. The projection can never be longer than the vector itself, so the leftover squared is non negative.', 7.4),
+    's08.b3': ('Written down: the sum of two Phis, squared, is at most two times their sum of squares.', 6.0),
+    's08.b4': ('For the form I need: two Phis, squared, is at most two times their sum of squares. And that sum simplifies: one plus A times one plus B is one plus s plus p.', 9.0),
+    's08.b5': ('Hold on to that. In the hard part I will bound two of the three terms with exactly this, and I will need to know what it costs.', 9.0),
+    's09.b1': ('Now the turn. That third term looks like a different animal from the other two.', 5.3),
+    's09.b2': ('It is not. Divide the numerator and the denominator by a x.', 4.2),
+    's09.b3': ('The a x cancels, and you get one over the square root of one plus eight over a x.', 6.7),
+    's09.b4': ('Now define C as eight over a x. The third term is one over the square root of one plus C. The same function.', 8.4),
+    's09.b5': ('So the whole expression is Phi of A, plus Phi of B, plus Phi of C. One function, three times.', 7.0),
+    's09.b6': ('The asymmetry that made this look hostile was an illusion of notation.', 4.2),
+    's10.b1': ('And the constraint transforms with it. A times B times C is exactly eight.', 4.9),
+    's10.b2': ('So: three positive numbers, product eight, prove their Phi sum is between one and two.', 5.3),
+    's10.b3': ('Notice the eight is not arbitrary. It is two cubed, so the geometric mean of the three numbers is two, and the natural centre is all three equal to two.', 9.0),
+    's10.b4': ('And the second gift: the expression is now completely symmetric.', 3.5),
+    's11.b1': ('Because it is symmetric, I am allowed to sort the three letters.', 4.2),
+    's11.b2': ('Without loss of generality, A at most B at most C. Nothing is lost.', 4.9),
+    's11.b3': ('Two consequences. A is at most two and C is at least two, because A cubed is at most A B C, which is eight.', 8.8),
+    's11.b4': ('Flag that A is at most two. The entire upper bound hangs on it.', 4.9),
+    's12.b1': ('Lower bound. Here is the trade I promised.', 2.8),
+    's12.b2': ('For t positive, one plus t beats the square root of one plus t, so its reciprocal is smaller.', 6.7),
+    's12.b3': ('So Phi of t is strictly bigger than one over one plus t. The blue curve is above the amber one.', 7.4),
+    's12.b4': ('So we may push f down to a sum of rational functions. The trade is one sided, and it is in our favour.', 8.1),
+    's13.b1': ('Now sum those, and ask when their sum is at least one.', 4.2),
+    's13.b2': ('Clear the denominators. They are positive, so the inequality survives.', 3.5),
+    's13.b3': ('Write S for A plus B plus C and Q for A B plus B C plus C A. The left side is three plus two S plus Q.', 9.0),
+    's13.b4': ('The right side is one plus S plus Q plus A B C, and A B C is eight, so nine plus S plus Q.', 8.8),
+    's13.b5': ('Three plus two S plus Q at least nine plus S plus Q. Every Q cancels.', 5.6),
+    's13.b6': ('All that survives is S at least six. That is the whole content of the step.', 5.6),
+    's13.b7': ('And six is exactly what AM-GM hands us, because the cube root of eight is two.', 5.6),
+    's14.b1': ('So f is strictly greater than the rational sum, which is at least one. The lower bound is closed.', 6.7),
+    's14.b2': ('Honest note: this proof has slack. At the symmetric point f is root three, about one point seven three, not one.', 7.4),
+    's14.b3': ('We will not need it sharp. But you should know it is not.', 4.6),
+    's15.b1': ('Lower bound done. Now the hard half: the upper bound.', 3.5),
+    's15.b2': ('Before proving it, let me show you exactly where the danger lives.', 4.2),
+    's15.b3': ('Send x and a towards zero, along the diagonal.', 3.2),
+    's15.b4': ('The first two terms climb towards one each. The third term falls to zero. Watch the total.', 6.0),
+    's15.b5': ('It approaches two from below, and it would cross two if we were careless.', 4.9),
+    's15.b6': ('So the proof has to be sharp exactly here, in this corner. That rules out every comfortable estimate.', 6.3),
+    's16.b1': ('Case one. Suppose A plus B is at least six.', 3.5),
+    's16.b2': ('A is at most two, so B is at least six minus A, which is at least four.', 6.3),
+    's16.b3': ('And since C is at least B, C is at least four too.', 4.6),
+    's16.b4': ('Two terms are capped at one over root five, and the third is strictly below one.', 5.6),
+    's16.b5': ('One plus two over root five is one point eight nine four, less than two, because two over root five is less than one. That is just four less than five.', 9.0),
+    's17.b1': ('Case two. A plus B is less than six. This is the hard half.', 4.9),
+    's17.b2': ('Set s to A plus B, and p to A B. Then C is eight over p, and the third term is exactly root p over p plus eight. No approximation at all.', 9.0),
+    's17.b3': ('For the first two terms, all I have is Cauchy Schwarz.', 3.9),
+    's17.b4': ('The case hypothesis caps the product: B is less than six minus A.', 4.6),
+    's17.b5': ('On zero to two that parabola is increasing, and at A equals two it is exactly eight. So p is less than eight.', 8.1),
+    's17.b6': ('Everything now hangs on one number, p, in the open interval zero to eight.', 4.9),
+    's18.b1': ('Split on p, starting with p at most one. This is the delicate range.', 4.9),
+    's18.b2': ('Here the Cauchy bound decreases as s grows, because the derivative has the sign of p minus one.', 6.3),
+    's18.b3': ('So the bound is largest at the smallest s allowed, which is two root p. That evaluates to two over root one plus root p.', 8.8),
+    's18.b4': ('Add the third term, put q equal to root p, and we need this. One line, for every q greater than zero.', 7.7),
+    's18.b5': ('Three lines: rationalise, bound the root, and the remaining quadratic has negative discriminant.', 4.6),
+    's18.b6': ('Notice how sharp that had to be. As p goes to zero the crude bound tends to two from the wrong side, so no rougher inequality would have worked.', 9.0),
+    's19.b1': ('The other two sub-ranges are easy, because slack is available.', 3.5),
+    's19.b2': ('Now the bound increases with s, and s is less than six, so plug six in.', 5.6),
+    's19.b3': ('For one to three, that gives root two plus root three over eleven, which is one point nine three six.', 7.0),
+    's19.b4': ('For three to eight, four over root ten plus one over root two, which is one point nine seven two.', 7.0),
+    's19.b5': ('Both exact, not numerical. Sixty three beats forty four root two, and two point nine beats two root two.', 6.7),
+    's19.b6': ('Nothing deep is happening here. The deep part was the lemma.', 3.9),
+    's20.b1': ('Every case gives f less than two. Read the theorem.', 3.5),
+    's20.b2': ('One less than f, less than two, for every positive x and a.', 4.6),
+    's20.b3': ('Now let us look at it.', 2.2),
+    's21.b1': ('Panel one. Instead of a surface in three dimensions, I want to show you its shadow, because the shadow tells the truth better.', 8.1),
+    's21.b2': ('Here is the field. Both axes are logarithmic, because that is where the structure lives.', 5.3),
+    's21.b3': ('Colour is the value of f. Teal near one, amber middle, coral near two.', 4.9),
+    's21.b4': ('The thin curves are level sets. Read where the colour sits.', 3.9),
+    's21.b5': ('Now the point of the whole picture. The scale bar runs from one to two.', 5.3),
+    's21.b6': ('Not one pixel of this field is ever one, and not one pixel is ever two. The colour lives strictly between the two ends of the bar.', 9.0),
+    's21.b7': ('A surface in three dimensions would have hidden this. As contours, you can check it yourself.', 5.6),
+    's22.b1': ('Panel two. Fix a, and sweep x. Here a is two.', 3.9),
+    's22.b2': ('The blue term collapses. The flat blue line is Phi of a, which does not move.', 5.6),
+    's22.b3': ('The violet term rises to meet it. That is the opening fight, now with arithmetic attached.', 5.6),
+    's22.b4': ('And the black total never leaves the shaded band between one and two.', 4.6),
+    's22.b5': ('The dashed lines are the bounds. The curve gets close to the coral one when x is small, which is the corner we had to be careful about.', 9.0),
+    's22.b6': ('Change a in the code and the picture changes, but the total stays inside. It has to.', 6.0),
+    's23.b1': ('Panel three. The symmetric transformation, in coordinates where it is actually simple.', 4.2),
+    's23.b2': ('On the left, take logarithms. The product constraint A B C equals eight becomes the plane ln A plus ln B plus ln C equals ln eight.', 9.0),
+    's23.b3': ('A product constraint is a plane. That is the whole content of the substitution.', 4.9),
+    's23.b4': ('The symmetric point A equals B equals C equals two is the origin of that plane.', 5.6),
+    's23.b5': ('The heavy line is where C equals one.', 2.8),
+    's23.b6': ('On the right, the same function on that surface. Same colours as panel one. It has no boundary, yet f still has a supremum, out at the corners.', 9.0),
+    's24.b1': ('Panel four. Where do the two cases actually live?', 3.2),
+    's24.b2': ('Here is the A B plane, with the ordering A at most B that we are allowed to assume.', 6.7),
+    's24.b3': ('The line A plus B equals six splits it. Above and left, case one.', 4.9),
+    's24.b4': ('The two hyperbolas split case two into the three sub-ranges, by the product p.', 4.9),
+    's24.b5': ('And the region where p exceeds eight is empty inside case two, which is why we never had to consider it.', 7.4),
+    's24.b6': ('So the case split was never mysterious. It is bookkeeping for where our estimates are sharp.', 5.6),
+    's25.b1': ('Panel five. Ten thousand random positive pairs, sampled logarithmically.', 3.2),
+    's25.b2': ('Minimum one point zero zero five seven. Maximum one point nine nine nine nine nine five.', 5.6),
+    's25.b3': ('Mean one point five eight three. Variance zero point one one six.', 4.2),
+    's25.b4': ('Not one sample at or below one. Not one sample at or above two.', 4.9),
+    's25.b5': ('Look at the histogram. The samples crowd away from both ends.', 3.9),
+    's25.b6': ('The closest approach to two was within five millionths. That is how tight it is.', 5.3),
+    's25.b7': ('But let me be honest. Ten thousand samples is evidence, not proof. No amount of sampling proves a strict inequality. That is what the proof was for.', 9.0),
+    's26.b1': ('One last picture, and it is the payoff.', 2.8),
+    's26.b2': ('Send x and a to infinity. Two terms die, the third goes to one. So f approaches one.', 6.3),
+    's26.b3': ('Send them to zero. Two terms go to one, the third dies. So f approaches two.', 5.6),
+    's26.b4': ('The infimum is one and the supremum is two, and neither is ever attained.', 4.9),
+    's26.b5': ('So writing one point zero zero zero one would be false. Writing one point nine nine nine nine would be false.', 7.4),
+    's26.b6': ('Because neither limit is reached, the statement must use strict inequalities.', 3.9),
+    's27.b1': ('That is the proof. Let us read it once, start to finish.', 4.2),
+    's27.b2': ('Substitute, and the product constraint appears for free.', 2.8),
+    's27.b3': ('The lower bound is the rational trade plus AM-GM.', 3.2),
+    's27.b4': ('The upper bound splits on A plus B, then on the product. One lemma does the real work.', 6.3),
+    's27.b5': ('The script for this video, and the checker that verifies every inequality in it, are both in the repository. Run them yourself.', 7.7),
 }
-TOTAL_RUNTIME = sum(duration for duration, _, _ in SCENE_BUDGET.values())
+
+NARRATION: dict[str, list[tuple[str, str, float]]] = {}
+for _beat, (_line, _hold) in BEATS.items():
+    NARRATION.setdefault(f"S{int(_beat[1:3])}", []).append((_beat, _line, _hold))
+NARRATION = {k: NARRATION[k] for k in sorted(NARRATION, key=lambda s: int(s[1:]))}
+
+SCENE_BUDGET: dict[str, list[float]] = {
+    name: [dur for _, _, dur in lines] for name, lines in NARRATION.items()
+}
+TOTAL_NARRATION = round(sum(sum(v) for v in SCENE_BUDGET.values()), 3)
 
 
-def hopf_point(t: float, theta: float, phi: float) -> np.ndarray:
-    """Point of the stereographic shadow of the Hopf fiber over (theta, phi)."""
-    half = theta / 2.0
-    cos_half = np.cos(half)
-    sin_half = np.sin(half)
-    denominator = 1.0 - sin_half * np.sin(t + phi)
-    return np.array(
-        [
-            cos_half * np.cos(t) / denominator,
-            cos_half * np.sin(t) / denominator,
-            sin_half * np.cos(t + phi) / denominator,
-        ]
+# ---------------------------------------------------------------------------
+# precomputed evidence for the closing panels (seed 20080, matches
+# verification/numerical_report.txt line for line)
+# ---------------------------------------------------------------------------
+_RNG = np.random.default_rng(20080)
+SAMPLE_X = np.exp(_RNG.uniform(-12, 12, 10_000))
+SAMPLE_A = np.exp(_RNG.uniform(-12, 12, 10_000))
+SAMPLE_F = F2(SAMPLE_X, SAMPLE_A)
+STATS = {
+    "n": int(SAMPLE_F.size),
+    "min": float(SAMPLE_F.min()),
+    "max": float(SAMPLE_F.max()),
+    "mean": float(SAMPLE_F.mean()),
+    "var": float(SAMPLE_F.var()),
+    "std": float(SAMPLE_F.std()),
+    "median": float(np.median(SAMPLE_F)),
+    "p1": float(np.percentile(SAMPLE_F, 1)),
+    "p99": float(np.percentile(SAMPLE_F, 99)),
+    "below": int((SAMPLE_F <= 1.0).sum()),
+    "above": int((SAMPLE_F >= 2.0).sum()),
+}
+HIST, HIST_EDGES = np.histogram(SAMPLE_F, bins=26, range=(1.0, 2.0))
+
+
+def fit_width(group: Mobject, limit: float = SAFE_X * 2) -> Mobject:
+    if group.width > limit:
+        group.scale_to_fit_width(limit)
+    return group
+
+
+def clamp_y(group: Mobject, top: float = STAGE_TOP, bot: float = STAGE_BOT) -> Mobject:
+    if group.get_top()[1] > top:
+        group.shift(DOWN * (group.get_top()[1] - top))
+    if group.get_bottom()[1] < bot:
+        group.shift(UP * (bot - group.get_bottom()[1]))
+    return group
+
+
+def clamp_x(group: Mobject, limit: float = SAFE_X) -> Mobject:
+    if group.get_left()[0] < -limit:
+        group.shift(RIGHT * (-limit - group.get_left()[0]))
+    if group.get_right()[0] > limit:
+        group.shift(LEFT * (group.get_right()[0] - limit))
+    return group
+
+
+def stage_fit(group: Mobject, limit_w: float = 12.6,
+              limit_h: float = STAGE_TOP - STAGE_BOT) -> Mobject:
+    """Shrink to fit the stage box, then clamp both axes.
+
+    Both dimensions matter: constraining width alone lets a tall stack of
+    formulas escape through the top of the frame, which is exactly the failure
+    the layout audit exists to catch.
+    """
+    k = min(limit_w / max(group.width, 1e-6),
+            limit_h / max(group.height, 1e-6),
+            1.0)
+    if k < 1.0:
+        group.scale(k)
+    clamp_y(group)
+    clamp_x(group)
+    return group
+
+
+def title_bar(label: str, title: str) -> VGroup:
+    tag = Text(label, font_size=FS_LABEL, color=MUTED, weight=BOLD)
+    name = Text(title, font_size=FS_TITLE, color=INK, weight=BOLD)
+    tag.next_to(name, LEFT, buff=0.34).align_to(name, UP)
+    bar = VGroup(tag, name).arrange(RIGHT, buff=0.34)
+    bar.to_edge(UP, buff=0.30)
+    if bar.get_right()[0] > SAFE_X:
+        bar.shift(LEFT * (bar.get_right()[0] - SAFE_X))
+    return bar
+
+
+def _wrap_caption(text: str, width: float, font_size: int) -> list[str]:
+    """Greedy word wrap.
+
+    ManimCE 0.21 dropped Text's ``word_wrap``/``width`` kwargs, so the line
+    breaks are computed here from an average glyph width and then clamped by
+    fit_width as a backstop.
+    """
+    per_line = max(12, int(width / (0.0092 * font_size)))
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        if current and len(current) + 1 + len(word) > per_line:
+            lines.append(current)
+            current = word
+        else:
+            current = (current + " " + word).strip()
+    if current:
+        lines.append(current)
+    return lines
+
+
+def caption_bar(text: str) -> VGroup:
+    body = VGroup(*[
+        Text(line, font_size=FS_CAPTION, color=INK) for line in
+        _wrap_caption(text, CAPTION_W, FS_CAPTION)
+    ]).arrange(DOWN, buff=0.12, aligned_edge=LEFT)
+    fit_width(body, CAPTION_W)
+    body.set_opacity(0.94)
+    plate = RoundedRectangle(
+        corner_radius=0.16,
+        width=body.width + 0.72,
+        height=body.height + 0.52,
+        stroke_color=GRID,
+        stroke_width=1.2,
+        fill_color=CARD,
+        fill_opacity=0.82,
     )
+    plate.move_to(body.get_center())
+    return VGroup(plate, body).move_to([0.0, CAPTION_Y, 0.0])
 
 
-def make_fiber(theta: float, phi: float, color: str, samples: int = 180) -> VMobject:
-    """Closed 3D circle: the stereographic image of one Hopf fiber."""
-    points = [hopf_point(TAU * i / samples, theta, phi) for i in range(samples + 1)]
-    fiber = VMobject()
-    fiber.set_points_smoothly(points)
-    fiber.set_stroke(color, width=3.0)
-    fiber.set_fill(opacity=0.0)
-    fiber.set_shade_in_3d(True)
-    return fiber
-
-
-def torus_pair(theta: float) -> tuple[float, float]:
-    """(major, minor) radii of the Clifford torus that carries latitude theta."""
-    half = theta / 2.0
-    return float(1.0 / np.cos(half)), float(np.tan(half))
-
-
-def torus_bundle(theta: float, color: str) -> tuple[Torus, VGroup]:
-    """Clifford torus at latitude theta plus eight fibers woven over it."""
-    major, minor = torus_pair(theta)
-    shell = Torus(
-        major_radius=major, minor_radius=minor, resolution=TORUS_RESOLUTION
+def card(contents: Mobject, width: float = 11.4, color: str = GRID) -> VGroup:
+    plate = RoundedRectangle(
+        corner_radius=0.18,
+        width=width,
+        height=contents.height + 0.86,
+        stroke_color=color,
+        stroke_width=1.6,
+        fill_color=CARD,
+        fill_opacity=0.92,
     )
-    shell.set_fill(color, opacity=0.12)
-    shell.set_stroke(color, 2.4)
-    shell.set_shade_in_3d(True)
-    fibers = VGroup(
-        *[make_fiber(theta, TAU * k / 8 + 0.2, color, samples=120) for k in range(8)]
+    plate.move_to(contents.get_center())
+    return VGroup(plate, contents)
+
+
+def key_idea(tex: str, color: str = AMBER, size: int = FS_WORK) -> VGroup:
+    label = Text("KEY IDEA", font_size=FS_MICRO, color=color, weight=BOLD)
+    body = MathTex(tex, font_size=size, color=INK)
+    inner = VGroup(label, body).arrange(DOWN, buff=0.16)
+    plate = RoundedRectangle(
+        corner_radius=0.16,
+        width=inner.width + 0.9,
+        height=inner.height + 0.62,
+        stroke_color=color,
+        stroke_width=1.6,
+        fill_color=color,
+        fill_opacity=0.10,
     )
-    return shell, fibers
+    plate.move_to(inner.get_center())
+    return VGroup(plate, inner)
 
 
-def shadow_radius(alpha_deg: float) -> float:
-    """Radius of the stereographic shadow of latitude alpha (degrees)."""
-    alpha = np.deg2rad(alpha_deg)
-    return POLE_TO_PLANE * float(np.cos(alpha / 2) / np.sin(alpha / 2))
+def note(text: str, size: int = FS_MICRO, color: str = MUTED) -> VGroup:
+    body = VGroup(*[
+        Text(line, font_size=size, color=color)
+        for line in _wrap_caption(text, 12.2, size)
+    ]).arrange(DOWN, buff=0.10, aligned_edge=LEFT)
+    return fit_width(body, 12.2)
 
 
-class HopfFibrationScene(ThreeDScene):
-    """S^3 -> S^2 as linked circles, in nine sections."""
+def vchain(parts: list, buff: float = 0.34) -> VGroup:
+    return VGroup(*parts).arrange(RIGHT, buff=buff)
 
-    # ------------------------------------------------------------------
-    # plumbing
-    # ------------------------------------------------------------------
+
+def vstack(parts: list, buff: float = 0.30, aligned: str = "LEFT") -> VGroup:
+    return VGroup(*parts).arrange(DOWN, buff=buff, aligned_edge=aligned)
+
+
+def strike(target: Mobject, color: str = MUTED) -> Line:
+    line = Line(
+        target.get_corner(UL),
+        target.get_corner(DR),
+        stroke_width=2.0,
+        color=color,
+    )
+    return line
+
+
+def frame_00() -> VGroup:
+    return VGroup()
+
+
+def frame_01() -> VGroup:
+    head = Text("2008 Jiangxi Gaokao  ·  Q22", font_size=FS_LABEL,
+                color=MUTED, weight=BOLD)
+    verdict = verdict_tex(r"f(x,a)", 76)
+    domain = MathTex(r"x,\,a\;>\;0", font_size=FS_WORK, color=MUTED)
+    expr = MathTex(
+        r"f(x,a)=\frac{1}{\sqrt{1+x}}+\frac{1}{\sqrt{1+a}}"
+        r"+\sqrt{\frac{ax}{ax+8}}",
+        font_size=40,
+        color=INK,
+    )
+    foot = Text("a 17-minute proof  ·  every step on screen",
+                font_size=FS_LABEL, color=MUTED)
+    stack = VGroup(head, verdict, domain, expr, foot).arrange(DOWN, buff=0.30)
+    stage_fit(stack, 12.0)
+    stack.move_to([0.0, 0.15, 0.0])
+    return stack
+
+
+def frame_02() -> VGroup:
+    head = title_bar("01  HOOK", "Why the obvious attack fails")
+    left = Axes(
+        x_range=[0, 40, 10], y_range=[0, 1.1, 0.5],
+        x_length=3.5, y_length=2.5,
+        axis_config={"include_ticks": False, "stroke_color": GRID, "stroke_width": 2},
+        tips=False,
+    )
+    right = left.copy()
+    left.move_to([-4.3, -0.15, 0.0])
+    right.move_to([2.1, -0.15, 0.0])
+    c1 = left.plot(lambda t: PHI(min(t, 1e9)), x_range=[0, 40], color=BLUE, stroke_width=4)
+    c2 = right.plot(lambda t: np.sqrt(2 * min(t, 1e9) / (2 * min(t, 1e9) + 8)),
+                    x_range=[0, 40], color=VIOLET, stroke_width=4)
+    l1 = Text("first term", font_size=FS_MICRO, color=BLUE).next_to(c1, UP, buff=0.14)
+    l2 = Text("third term", font_size=FS_MICRO, color=VIOLET).next_to(c2, DOWN, buff=0.14)
+    clash = MathTex(r"\longleftarrow\ \text{fight}\ \longrightarrow", font_size=FS_LABEL,
+                    color=CORAL)
+    clash.move_to([-1.1, 1.35, 0.0])
+    tail = MathTex(r"x\uparrow\ \Rightarrow\ \phi(x)\downarrow,\quad"
+                   r"\sqrt{\tfrac{ax}{ax+8}}\uparrow", font_size=FS_WORK, color=MUTED)
+    tail.move_to([0.0, -1.95, 0.0])
+    stage_fit(VGroup(head, left, right, c1, c2, l1, l2, clash, tail), 13.4)
+    return VGroup(head, left, right, c1, c2, l1, l2, clash, tail)
+
+
+def frame_03() -> VGroup:
+    head = title_bar("02  TOOLKIT", "The one function we live inside")
+    ax = Axes(
+        x_range=[0, 12, 3], y_range=[0, 1.1, 0.25],
+        x_length=8.2, y_length=4.3,
+        axis_config={"stroke_color": GRID, "stroke_width": 2.4,
+                     "include_tip": False},
+    )
+    ax.move_to([-1.2, 0.05, 0.0])
+    curve = ax.plot(lambda t: PHI(t), x_range=[0, 12], color=BLUE, stroke_width=5)
+    band = ax.plot(lambda t: PHI(t), x_range=[0, 1], color=BLUE, stroke_width=16)
+    band.set_opacity(0.18)
+    dot = Dot(ax.c2p(0, 1.0), color=TEAL, radius=0.07)
+    guide = DashedLine(ax.c2p(0, 1.0), ax.c2p(4.6, 1.0), color=TEAL,
+                       stroke_width=2, dash_length=0.12)
+    lbl = Text("phi(0) = 1", font_size=FS_LABEL, color=TEAL)
+    lbl.next_to(dot, RIGHT, buff=0.16)
+    asym = MathTex(r"\phi(t)\sim t^{-1/2}", font_size=FS_WORK, color=AMBER)
+    asym.move_to([4.35, 1.75, 0.0])
+    slow = Text("dies slowly", font_size=FS_MICRO, color=MUTED)
+    slow.next_to(asym, DOWN, buff=0.12)
+    xlab = Text("t", font_size=FS_LABEL, color=MUTED).next_to(ax, DOWN, buff=0.14)
+    return stage_fit(VGroup(head, ax, curve, band, dot, guide, lbl, asym, slow, xlab))
+
+
+def frame_04() -> VGroup:
+    head = title_bar("02  TOOLKIT", "An integral is accumulated area")
+    ax = Axes(
+        x_range=[0, 1, 0.25], y_range=[0, 1.15, 0.25],
+        x_length=5.0, y_length=4.3,
+        axis_config={"stroke_color": GRID, "stroke_width": 2.4, "include_tip": False},
+    )
+    ax.move_to([-3.4, 0.0, 0.0])
+    curve = ax.plot(lambda t: PHI(t), x_range=[0, 1], color=BLUE, stroke_width=5)
+    region = ax.get_area(curve, x_range=(0, 1), color=TEAL, opacity=0.22)
+    ceil = DashedLine(ax.c2p(0, 1.0), ax.c2p(1, 1.0), color=CORAL,
+                      stroke_width=2.6, dash_length=0.12)
+    clbl = Text("y = 1", font_size=FS_MICRO, color=CORAL).next_to(ceil, UP, buff=0.10)
+    bars = VGroup(*[
+        ax.get_riemann_rectangles(curve, x_range=(0, 1), dx=1.0 / 16, color=BLUE,
+                                  fill_opacity=0.30, stroke_width=0)
+        for _ in range(1)
+    ])
+    val = MathTex(r"\int_0^1\frac{dt}{\sqrt{1+t}}=2(\sqrt2-1)\approx0.828",
+                  font_size=FS_WORK, color=INK)
+    val.move_to([3.1, 1.55, 0.0])
+    side = VGroup(
+        Text("the whole region fits", font_size=FS_LABEL, color=INK),
+        Text("strictly under y = 1", font_size=FS_LABEL, color=CORAL),
+        Text("so phi never reaches 1", font_size=FS_LABEL, color=TEAL),
+    ).arrange(DOWN, buff=0.18, aligned_edge=LEFT)
+    side.move_to([3.1, -0.35, 0.0])
+    return stage_fit(VGroup(head, ax, curve, region, bars, ceil, clbl, val, side))
+
+
+def frame_05() -> VGroup:
+    head = title_bar("02  TOOLKIT", "AM-GM, proved twice")
+    left = VGroup()
+    circ = Circle(radius=1.45, color=GRID, stroke_width=2.4).move_to([-4.1, 0.5, 0])
+    left.add(circ)
+    left.add(Line([-5.55, 0.5, 0], [-2.65, 0.5, 0], color=MUTED, stroke_width=2))
+    left.add(Line([-4.1, 0.5, 0], [-5.15, -0.75, 0], color=BLUE, stroke_width=3.4))
+    left.add(Line([-4.1, 0.5, 0], [-3.05, -0.75, 0], color=VIOLET, stroke_width=3.4))
+    alt = DashedLine([-5.15, -0.75, 0], [-3.05, -0.75, 0], color=TEAL, stroke_width=2.4)
+    left.add(alt)
+    left.add(Text("a", font_size=FS_MICRO, color=BLUE).move_to([-4.7, -0.55, 0]))
+    left.add(Text("b", font_size=FS_MICRO, color=VIOLET).move_to([-3.5, -0.55, 0]))
+    left.add(Text("altitude = sqrt(ab)", font_size=FS_MICRO, color=TEAL)
+             .next_to(alt, DOWN, buff=0.16))
+    geo = MathTex(r"\sqrt{ab}\le\frac{a+b}{2}", font_size=FS_WORK, color=INK)
+    geo.move_to([-4.1, -1.62, 0.0])
+    left.add(geo)
+    gtag = Text("GEOMETRIC", font_size=FS_MICRO, color=MUTED, weight=BOLD)
+    gtag.next_to(geo, UP, buff=0.22)
+    left.add(gtag)
+
+    ax = Axes(
+        x_range=[0.2, 5, 1], y_range=[0, 6, 2],
+        x_length=4.6, y_length=3.3,
+        axis_config={"stroke_color": GRID, "stroke_width": 2, "include_tip": False},
+    )
+    ax.move_to([3.5, 0.55, 0])
+    g = ax.plot(lambda t: t + 1.0 / t, x_range=[0.2, 5], color=AMBER, stroke_width=4.4)
+    mn = Dot(ax.c2p(1, 2), color=TEAL, radius=0.07)
+    mg = DashedLine(ax.c2p(0.2, 2), ax.c2p(1, 2), color=TEAL, stroke_width=1.6)
+    ml = Text("min = 2 at t = 1", font_size=FS_MICRO, color=TEAL)
+    ml.next_to(mn, RIGHT, buff=0.14)
+    ana = MathTex(r"t+\tfrac1t\ge2\ \Longrightarrow\ a+b\ge2\sqrt{ab}",
+                  font_size=32, color=INK)
+    ana.move_to([3.5, -1.62, 0.0])
+    atag = Text("ANALYTIC", font_size=FS_MICRO, color=MUTED, weight=BOLD)
+    atag.next_to(ana, UP, buff=0.22)
+    right = VGroup(ax, g, mn, mg, ml, ana, atag)
+    grp = VGroup(left, right)
+    return stage_fit(VGroup(head, grp))
+
+
+def frame_06() -> VGroup:
+    head = title_bar("02  TOOLKIT", "Three numbers: the form we will use")
+    main = MathTex(r"A+B+C\ \ge\ 3\sqrt[3]{ABC}", font_size=60, color=INK)
+    eq = Text("equality exactly when A = B = C", font_size=FS_LABEL, color=TEAL)
+    eq.next_to(main, DOWN, buff=0.26)
+    sub = MathTex(r"\sqrt[3]{8}=2\qquad\Longrightarrow\qquad A+B+C\ \ge\ 3\cdot2=6",
+                  font_size=44, color=AMBER)
+    note6 = Text("remember the 6 — it appears twice, and it earns its keep twice",
+                 font_size=FS_LABEL, color=MUTED)
+    grp = VGroup(main, eq, sub, note6).arrange(DOWN, buff=0.34)
+    grp.move_to([0.0, 0.15, 0.0])
+    return stage_fit(VGroup(head, grp))
+
+
+def frame_07() -> VGroup:
+    head = title_bar("02  TOOLKIT", "Convexity: bending upward")
+    ax = Axes(
+        x_range=[0, 10, 2], y_range=[0, 1.15, 0.25],
+        x_length=5.4, y_length=3.7,
+        axis_config={"stroke_color": GRID, "stroke_width": 2.2, "include_tip": False},
+    )
+    ax.move_to([-3.7, 0.15, 0])
+    curve = ax.plot(lambda t: PHI(t), x_range=[0, 10], color=AMBER, stroke_width=5)
+    t0 = 3.0
+    slope = -0.5 * (1 + t0) ** -1.5
+    tang = ax.plot(lambda t: PHI(t0) + slope * (t - t0), x_range=[0, 10],
+                   color=CORAL, stroke_width=2.6)
+    th = ax.plot(lambda t: PHI(t0) + slope * (t - t0), x_range=[0, 3.0],
+                 color=CORAL, stroke_width=6)
+    th.set_opacity(0.5)
+    l1 = Text("curve above every tangent", font_size=FS_MICRO, color=TEAL)
+    l1.next_to(tang, UP, buff=0.16).shift(LEFT * 0.4)
+    l2 = Text("tangent line", font_size=FS_MICRO, color=CORAL)
+    l2.next_to(ax.c2p(8, PHI(8) + slope * 5), RIGHT, buff=0.10)
+    dd = MathTex(r"\phi''(t)=\tfrac34(1+t)^{-5/2}>0", font_size=32, color=MUTED)
+    dd.move_to([3.5, 1.35, 0.0])
+    side = VGroup(
+        Text("as t → 0", font_size=FS_LABEL, color=MUTED),
+        MathTex(r"\phi(t)\to1", font_size=44, color=TEAL),
+        Text("from below, never touching", font_size=FS_MICRO, color=MUTED),
+    ).arrange(DOWN, buff=0.16)
+    side.move_to([3.5, -0.75, 0.0])
+    return stage_fit(VGroup(head, ax, curve, tang, th, l1, l2, dd, side))
+
+
+def frame_08() -> VGroup:
+    head = title_bar("02  TOOLKIT", "Cauchy-Schwarz: the projection bound")
+    o = np.array([0.0, 0.0, 0.0])
+    u = np.array([1.55, 1.15, 0.0])
+    v = np.array([2.25, -0.35, 0.0])
+    ua, va = Arrow(o, u, buff=0, color=BLUE, stroke_width=5,
+                   max_tip_length_to_length_ratio=0.09)
+    vv = Arrow(o, v, buff=0, color=VIOLET, stroke_width=5,
+               max_tip_length_to_length_ratio=0.09)
+    proj_len = float(np.dot(u, v) / np.linalg.norm(v))
+    ph = v / np.linalg.norm(v) * proj_len
+    perp = u - ph
+    dashed = DashedLine(o, ph, color=TEAL, stroke_width=3, dash_length=0.1)
+    left = VGroup(ua, vv, dashed, Line(ph, u, color=CORAL, stroke_width=4))
+    lu = Text("u", font_size=FS_LABEL, color=BLUE).next_to(ua.get_end(), RIGHT, buff=0.08)
+    lv = Text("v", font_size=FS_LABEL, color=VIOLET).next_to(vv.get_end(), RIGHT, buff=0.08)
+    lproj = Text("projection", font_size=FS_MICRO, color=TEAL)
+    lproj.next_to(dashed, DOWN, buff=0.16)
+    lperp = Text("leftover ≥ 0", font_size=FS_MICRO, color=CORAL)
+    lperp.next_to(Line(ph, u), UP, buff=0.14)
+    leftgrp = VGroup(left, lu, lv, lproj, lperp)
+    leftgrp.move_to([-3.9, 0.15, 0.0])
+    lines = VGroup(
+        MathTex(r"\bigl(\phi(A)+\phi(B)\bigr)^2\le 2\left(\tfrac1{1+A}+\tfrac1{1+B}\right)",
+                font_size=36, color=INK),
+        MathTex(r"(1+A)(1+B)=1+s+p,\qquad s=A+B,\ p=AB", font_size=36, color=AMBER),
+        MathTex(r"\phi(A)+\phi(B)\ \le\ \sqrt{\frac{2(2+s)}{1+s+p}}", font_size=40,
+                color=TEAL),
+    ).arrange(DOWN, buff=0.42)
+    lines.move_to([2.9, 0.15, 0.0])
+    return stage_fit(VGroup(head, leftgrp, lines))
+
+
+def frame_09() -> VGroup:
+    head = title_bar("03  SUBSTITUTION", "The third term was never a third term")
+    top = MathTex(r"\sqrt{\frac{ax}{ax+8}}", font_size=64, color=VIOLET)
+    mid = MathTex(r"=\ \sqrt{\frac{1}{1+\frac{8}{ax}}}\ =\ \frac{1}{\sqrt{1+C}}",
+                  font_size=44, color=INK)
+    defn = MathTex(r"C:=\frac{8}{ax}", font_size=36, color=AMBER)
+    whole = MathTex(
+        r"f=\phi(A)+\phi(B)+\phi(C),\qquad A=x,\ B=a,\ C=\frac{8}{AB}",
+        font_size=40, color=INK,
+    )
+    grp = VGroup(top, mid, defn, whole).arrange(DOWN, buff=0.36)
+    grp.move_to([0.0, 0.15, 0.0])
+    return stage_fit(VGroup(head, grp))
+
+
+def frame_10() -> VGroup:
+    head = title_bar("03  SUBSTITUTION", "The real problem: three numbers, product eight")
+    inner = VGroup(
+        MathTex(r"A,B,C>0,\qquad ABC=8", font_size=44, color=AMBER),
+        verdict_tex(r"\phi(A)+\phi(B)+\phi(C)", 48),
+    ).arrange(DOWN, buff=0.34)
+    box = card(inner, 11.6)
+    why = Text("8 = 2³ — three terms, each naturally centred at 2",
+               font_size=FS_LABEL, color=MUTED)
+    why.next_to(box, DOWN, buff=0.32)
+    gift = Text("and the problem just became symmetric — a gift we are about to spend",
+                font_size=FS_LABEL, color=VIOLET)
+    gift.next_to(why, DOWN, buff=0.16)
+    grp = VGroup(box, why, gift)
+    grp.move_to([0.0, 0.2, 0.0])
+    return stage_fit(VGroup(head, grp))
+
+
+def frame_11() -> VGroup:
+    head = title_bar("03  SUBSTITUTION", "Symmetry buys an ordering")
+    chips = VGroup()
+    for i, (nm, col) in enumerate([("A", BLUE), ("B", BLUE), ("C", BLUE)]):
+        c = VGroup(
+            RoundedRectangle(corner_radius=0.14, width=1.5, height=1.5,
+                             stroke_color=col, stroke_width=2.4,
+                             fill_color=col, fill_opacity=0.12),
+            MathTex(nm, font_size=44, color=col),
+        )
+        c.move_to([-3.1 + 3.1 * i, 1.55, 0.0])
+        chips.add(c)
+    swapnote = Text("the expression cannot tell them apart", font_size=FS_MICRO,
+                    color=MUTED)
+    swapnote.next_to(chips, DOWN, buff=0.24)
+    wlog = MathTex(r"\mathrm{WLOG}\quad A\le B\le C", font_size=44, color=TEAL)
+    wlog.move_to([0.0, -0.55, 0.0])
+    cons = VGroup(
+        MathTex(r"A\le2", font_size=40, color=AMBER),
+        MathTex(r"2\le C", font_size=40, color=AMBER),
+    ).arrange(RIGHT, buff=1.5)
+    cons.move_to([0.0, -1.85, 0.0])
+    why = Text("from A³ ≤ ABC = 8", font_size=FS_MICRO, color=MUTED)
+    why.next_to(cons, DOWN, buff=0.16)
+    grp = VGroup(chips, swapnote, wlog, cons, why)
+    return stage_fit(VGroup(head, grp))
+
+
+def frame_12() -> VGroup:
+    head = title_bar("04  LOWER BOUND", "Trade the square root for a rational function")
+    ax = Axes(
+        x_range=[0, 9, 3], y_range=[0, 1.15, 0.25],
+        x_length=6.2, y_length=4.0,
+        axis_config={"stroke_color": GRID, "stroke_width": 2.2, "include_tip": False},
+    )
+    ax.move_to([-3.1, 0.1, 0])
+    c1 = ax.plot(lambda t: PHI(t), x_range=[0, 9], color=BLUE, stroke_width=5)
+    c2 = ax.plot(lambda t: 1.0 / (1.0 + t), x_range=[0, 9], color=AMBER, stroke_width=4)
+    l1 = Text("phi(t)", font_size=FS_LABEL, color=BLUE).next_to(c1, UP, buff=0.14)
+    l2 = Text("1/(1+t)", font_size=FS_LABEL, color=AMBER).next_to(c2, DOWN, buff=0.16)
+    reason = VGroup(
+        Text("for t > 0 :", font_size=FS_LABEL, color=MUTED),
+        MathTex(r"1+t>\sqrt{1+t}", font_size=36, color=INK),
+        MathTex(r"\Longrightarrow\ \frac{1}{\sqrt{1+t}}>\frac{1}{1+t}",
+                font_size=40, color=TEAL),
+    ).arrange(DOWN, buff=0.26, aligned_edge=LEFT)
+    reason.move_to([3.4, 0.15, 0.0])
+    gain = Text("and this trade is strictly in our favour", font_size=FS_MICRO,
+                color=VIOLET)
+    gain.next_to(reason, DOWN, buff=0.26)
+    return stage_fit(VGroup(head, ax, c1, c2, l1, l2, reason, gain))
+
+
+def frame_13() -> VGroup:
+    head = title_bar("04  LOWER BOUND", "Clear denominators — watch it collapse")
+    l1 = MathTex(r"\frac1{1+A}+\frac1{1+B}+\frac1{1+C}\ \ge\ 1", font_size=44, color=INK)
+    l2 = MathTex(r"(1+B)(1+C)+(1+A)(1+C)+(1+A)(1+B)\ \ge\ (1+A)(1+B)(1+C)",
+                 font_size=32, color=MUTED)
+    l3 = MathTex(r"3+2S+Q\ \ge\ 1+S+Q+ABC", font_size=40, color=INK)
+    l4 = MathTex(r"3+2S+Q\ \ge\ 1+S+Q+8", font_size=40, color=AMBER)
+    l5 = MathTex(r"A+B+C\ \ge\ 6", font_size=54, color=AMBER)
+    defs = Text("S = A+B+C ,  Q = AB+BC+CA", font_size=FS_MICRO, color=MUTED)
+    body = VGroup(l1, l2, l3, l4, l5).arrange(DOWN, buff=0.24, aligned_edge=LEFT)
+    defs.next_to(body, DOWN, buff=0.18).align_to(body, RIGHT)
+    amg = MathTex(r"A+B+C\ \ge\ 3\sqrt[3]{ABC}=3\cdot2=6", font_size=38, color=TEAL)
+    amg.next_to(body, DOWN, buff=0.30)
+    grp = VGroup(head, body, defs, amg)
+    stage_fit(grp)
+    grp.move_to([0.0, 0.15, 0.0])
+    return grp
+
+
+def frame_14() -> VGroup:
+    head = title_bar("04  LOWER BOUND", "Lower bound closed")
+    chain = vchain([
+        MathTex(r"f", font_size=52, color=INK),
+        MathTex(r">", font_size=52, color=TEAL),
+        MathTex(r"\tfrac1{1+A}+\tfrac1{1+B}+\tfrac1{1+C}", font_size=44, color=INK),
+        MathTex(r"\ge\ 1", font_size=52, color=AMBER),
+    ])
+    ring = Circle(radius=0.24, color=TEAL, stroke_width=3).move_to(chain[1].get_center())
+    verdict = MathTex(r"f\;>\;1", font_size=64, color=TEAL)
+    verdict.next_to(chain, DOWN, buff=0.55)
+    honesty = Text("slack to spare: at A=B=C=2 we get f = sqrt 3 ≈ 1.73, not 1",
+                   font_size=FS_LABEL, color=MUTED)
+    honesty.next_to(verdict, DOWN, buff=0.24)
+    grp = VGroup(head, chain, ring, verdict, honesty)
+    grp.move_to([0.0, 0.2, 0.0])
+    return stage_fit(grp)
+
+
+    def finish(self, frame_mobject: Mobject, *extras: Mobject) -> None:
+        drops = [FadeOut(m) for m in extras if m in self.mobjects]
+        body = [m for m in self.mobjects if m not in extras]
+        anims = drops + ([FadeTransform(body[0], frame_mobject)] if body
+                         else [FadeIn(frame_mobject)])
+        self.play(*anims, run_time=0.8)
+        self.wait(0.6)
+
+    def close_beat(self) -> None:
+        TIMINGS.append((type(self).__name__, float(self.renderer.time)))
+
+
+FRAME_BUILDERS = {
+    "S0": frame_00,
+    "S1": frame_01,
+    "S2": frame_02,
+    "S3": frame_03,
+    "S4": frame_04,
+    "S5": frame_05,
+    "S6": frame_06,
+    "S7": frame_07,
+    "S8": frame_08,
+    "S9": frame_09,
+    "S10": frame_10,
+    "S11": frame_11,
+    "S12": frame_12,
+    "S13": frame_13,
+    "S14": frame_14,
+}
+
+
+def verdict_tex(body: str, size: int) -> MathTex:
+    """1 < body < 2, with the two bounds already coloured.
+
+    MathTex emits one submobject per LaTeX *argument*, so the bounds must be
+    passed as separate arguments to be addressable at all.
+    """
+    out = MathTex("1", r"\,<\,", body, r"\,<\,", "2", font_size=size, color=INK)
+    out[0].set_color(TEAL)
+    out[4].set_color(CORAL)
+    return out
+
+
+def frame_of(name: str) -> VGroup:
+    """Rebuild the closing picture of ``name`` from scratch."""
+    builder = FRAME_BUILDERS.get(name)
+    return builder() if builder else VGroup()
+
+
+def previous_section(name: str) -> str | None:
+    index = int(name[1:])
+    return f"S{index - 1}" if index > 1 else None
+
+
+# ---------------------------------------------------------------------------
+# colour ramps and scalar fields for the picture panels
+# ---------------------------------------------------------------------------
+def _rgb(value: str) -> np.ndarray:
+    return np.array([int(value[i:i + 2], 16) / 255.0 for i in (1, 3, 5)])
+
+
+_RAMP = (_rgb(TEAL), _rgb(AMBER), _rgb(CORAL))
+
+
+def _ramp(t: np.ndarray) -> np.ndarray:
+    t = np.clip(t, 0.0, 1.0)
+    out = np.empty(t.shape + (3,), dtype=float)
+    low = t < 0.5
+    out[low] = _RAMP[0] + (_RAMP[1] - _RAMP[0]) * (t[low] / 0.5)[..., None]
+    out[~low] = _RAMP[1] + (_RAMP[2] - _RAMP[1]) * ((t[~low] - 0.5) / 0.5)[..., None]
+    return out
+
+
+def _rgba(rgb: np.ndarray) -> np.ndarray:
+    alpha = np.full(rgb.shape[:2] + (1,), 255, dtype=np.uint8)
+    return np.dstack([(np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8), alpha])
+
+
+def _domain_image(n: int = 260, lo: float = -3.2, hi: float = 3.2) -> np.ndarray:
+    grid = np.exp(np.linspace(lo, hi, n))
+    X, Y = np.meshgrid(grid, grid)
+    return _rgba(_ramp(F2(X, Y) - 1.0))[::-1]
+
+
+def _logplane_image(n: int = 240) -> np.ndarray:
+    la = np.linspace(-4.2, 4.2, n)
+    lb = np.linspace(-4.2, 4.2, n)
+    LA, LB = np.meshgrid(la, lb)
+    LC = np.log(8.0) - LA - LB
+    A, B, C = np.exp(LA), np.exp(LB), np.exp(LC)
+    return _rgba(_ramp(F2(A, B) - 1.0))[::-1]
+
+
+def _ramp_strip(height: int = 96) -> np.ndarray:
+    t = np.linspace(0.0, 1.0, 256)
+    row = _ramp(t)
+    return _rgba(np.repeat(row[None, :, :], height, axis=0))
+
+
+def _iso_segments(level: float, rows: int = 54,
+                  lo: float = -3.2, hi: float = 3.4) -> list[tuple]:
+    """Short segments along the level set ``f = level``, one row at a time."""
+    out: list[tuple] = []
+    probe = np.exp(np.linspace(lo, hi, 160))
+    for xv in np.exp(np.linspace(lo, hi, rows)):
+        v = F2(xv, probe) - level
+        hits = np.where(np.sign(v[:-1]) * np.sign(v[1:]) < 0)[0]
+        roots = []
+        for i in hits:
+            a0, a1, f0 = probe[i], probe[i + 1], v[i]
+            for _ in range(34):
+                mid = np.sqrt(a0 * a1)
+                if (F2(xv, mid) - level) * f0 <= 0:
+                    a1 = mid
+                else:
+                    a0 = mid
+            roots.append((xv, float(np.sqrt(a0 * a1))))
+        for j in range(0, len(roots) - 1, 2):
+            out.append((roots[j], roots[j + 1]))
+    return out
+
+
+def _iso_group(level: float, color: str, width: float, opacity: float) -> VGroup:
+    segs = _iso_segments(level)
+    return VGroup(*[
+        Line(np.array([p[0], p[1], 0.0]), np.array([q[0], q[1], 0.0]),
+             color=color, stroke_width=width)
+        for p, q in segs
+    ]).set_opacity(opacity)
+
+
+def _pow(k: int) -> MathTex:
+    return MathTex(rf"10^{{{k}}}", font_size=FS_MICRO, color=MUTED)
+
+
+# ---------------------------------------------------------------------------
+# panel 1 - the scalar field over (x, a)
+# ---------------------------------------------------------------------------
+def panel_contour() -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 1 · the field, and the levels it never reaches")
+    img = ImageMobject(_domain_image()).scale_to_fit_height(4.35)
+    box = Rectangle(width=img.width + 0.12, height=img.height + 0.12,
+                    stroke_color=GRID, stroke_width=2).move_to(img.get_center())
+    field = Group(img, box).move_to([-1.85, 0.15, 0.0])
+    contours = VGroup(*[
+        _iso_group(level, INK, 1.3, 0.30) for level in
+        (1.15, 1.3, 1.45, 1.6, 1.7, 1.8, 1.9)
+    ]).move_to(field.get_center())
+    contours.scale_to_fit_width(field.width).scale_to_fit_height(field.height)
+
+    ticks = VGroup()
+    for k in (-3, -2, -1, 0, 1, 2, 3):
+        frac = (k + 3.2) / 6.4
+        pos = field.get_left()[0] + frac * field.width
+        ticks.add(Line([pos, field.get_bottom()[1], 0],
+                       [pos, field.get_bottom()[1] - 0.11, 0],
+                       color=GRID, stroke_width=1.5))
+        lab = _pow(k)
+        lab.move_to([pos, field.get_bottom()[1] - 0.33, 0])
+        ticks.add(lab)
+    xlab = MathTex(r"x", font_size=FS_LABEL, color=MUTED)
+    xlab.next_to(ticks, DOWN, buff=0.16).align_to(field, RIGHT)
+    ylab = MathTex(r"a", font_size=FS_LABEL, color=MUTED)
+    ylab.next_to(field, LEFT, buff=0.20).align_to(field, UP)
+
+    bar = ImageMobject(_ramp_strip()).scale_to_fit_height(4.35)
+    bar.scale_to_fit_width(0.30).next_to(field, RIGHT, buff=0.95)
+    barlab = VGroup()
+    for value, col in ((1.0, TEAL), (1.5, AMBER), (2.0, CORAL)):
+        m = MathTex(rf"{value:.1f}", font_size=FS_MICRO, color=col)
+        m.move_to([bar.get_right()[0] + 0.42,
+                   bar.get_center()[1] + (value - 1.5) * bar.height, 0.0])
+        barlab.add(m)
+    btitle = Text("value of f", font_size=FS_MICRO, color=MUTED)
+    btitle.next_to(bar, UP, buff=0.14)
+    never = VGroup(
+        Text("no pixel of this field", font_size=FS_MICRO, color=INK),
+        Text("is ever 1 or 2", font_size=FS_LABEL, color=TEAL),
+    ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
+    never.next_to(bar, DOWN, buff=0.34).align_to(bar, LEFT)
+    return stage_fit(Group(head, field, contours, ticks, xlab, ylab,
+                          bar, barlab, btitle, never))
+
+
+# ---------------------------------------------------------------------------
+# panel 2 - one slice, a fixed a, swept in x
+# ---------------------------------------------------------------------------
+def panel_slice(a_fixed: float = 2.0, xmax: float = 30.0) -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 2 · fix a, sweep x, watch the three terms add up")
+    ax = Axes(x_range=[0, xmax, 5], y_range=[0, 2.05, 0.5], x_length=8.6, y_length=4.4,
+              axis_config={"stroke_color": GRID, "stroke_width": 2.2,
+                           "include_tip": False})
+    ax.move_to([-1.5, 0.05, 0.0])
+    band = Polygon(ax.c2p(0, 1), ax.c2p(xmax, 1), ax.c2p(xmax, 2), ax.c2p(0, 2),
+                   stroke_width=0, fill_color=TEAL, fill_opacity=0.10).set_z_index(-1)
+    lo = DashedLine(ax.c2p(0, 1), ax.c2p(xmax, 1), color=TEAL, stroke_width=2,
+                    dash_length=0.14)
+    hi = DashedLine(ax.c2p(0, 2), ax.c2p(xmax, 2), color=CORAL, stroke_width=2,
+                    dash_length=0.14)
+    t1 = ax.plot(lambda t: PHI(t), x_range=[0, xmax], color=BLUE, stroke_width=4.4)
+    t3 = ax.plot(lambda t: np.sqrt(a_fixed * t / (a_fixed * t + 8.0)), x_range=[0, xmax],
+                 color=VIOLET, stroke_width=4.4)
+    t2 = DashedLine(ax.c2p(0, PHI(a_fixed)), ax.c2p(xmax, PHI(a_fixed)),
+                    color=BLUE, stroke_width=2, dash_length=0.12)
+    total = ax.plot(lambda t: F2(t, a_fixed), x_range=[0, xmax], color=INK, stroke_width=5)
+    legend = VGroup(
+        MathTex(r"\phi(x)", font_size=FS_MICRO, color=BLUE),
+        MathTex(rf"\phi({a_fixed:g})", font_size=FS_MICRO, color=BLUE),
+        MathTex(r"\sqrt{\tfrac{ax}{ax+8}}", font_size=FS_MICRO, color=VIOLET),
+        MathTex(r"f", font_size=FS_MICRO, color=INK),
+    ).arrange(DOWN, buff=0.16, aligned_edge=LEFT)
+    legend.next_to(ax, RIGHT, buff=0.30).align_to(ax, UP)
+    side = VGroup(
+        Text("the blue term collapses,", font_size=FS_MICRO, color=MUTED),
+        Text("the violet term rises to meet it,", font_size=FS_MICRO, color=MUTED),
+        Text("and the total never leaves the band", font_size=FS_LABEL, color=TEAL),
+    ).arrange(DOWN, buff=0.12, aligned_edge=LEFT)
+    side.next_to(ax, DOWN, buff=0.30).align_to(ax, LEFT)
+    return stage_fit(VGroup(head, ax, band, lo, hi, t1, t2, t3, total, legend, side))
+
+
+# ---------------------------------------------------------------------------
+# panel 3 - the constraint surface, straightened out by logarithms
+# ---------------------------------------------------------------------------
+def panel_logspace() -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 3 · the constraint ABC = 8, straightened")
+    img = ImageMobject(_logplane_image()).scale_to_fit_height(4.2)
+    box = Rectangle(width=img.width + 0.12, height=img.height + 0.12,
+                    stroke_color=GRID, stroke_width=2).move_to(img.get_center())
+    right = Group(img, box).move_to([2.6, 0.2, 0.0])
+    rlab = VGroup(
+        MathTex(r"\ln A", font_size=FS_MICRO, color=MUTED),
+        MathTex(r"\ln B", font_size=FS_MICRO, color=MUTED),
+    )
+    rlab[0].next_to(right, UP, buff=0.14)
+    rlab[1].next_to(right, LEFT, buff=0.20).align_to(right, DOWN)
+    rtitle = Text("f on the surface", font_size=FS_MICRO, color=INK)
+    rtitle.next_to(right, DOWN, buff=0.34)
+
+    ax = Axes(x_range=[-4.2, 4.2, 2], y_range=[-4.2, 4.2, 2], x_length=5.2,
+              y_length=4.2, axis_config={"stroke_color": GRID, "stroke_width": 2,
+                                         "include_tip": False})
+    ax.move_to([-3.4, 0.2, 0.0])
+    centre = Dot(ax.c2p(0, 0), color=TEAL, radius=0.07)
+    family = VGroup(*[
+        ax.plot(lambda t, c=c: c - t, x_range=[-4.2, 4.2], color=GRID, stroke_width=1.4)
+        for c in (-2.0, 0.0, 2.0)
+    ])
+    heavy = ax.plot(lambda t: np.log(8.0) - t, x_range=[-4.2, 4.2], color=AMBER,
+                    stroke_width=3.4)
+    hlab = MathTex(r"\ln A+\ln B=\ln 8\ \ (C=1)", font_size=FS_MICRO, color=AMBER)
+    hlab.next_to(ax.c2p(1.6, np.log(8.0) - 1.6), UP, buff=0.14)
+    clab = Text("A = B = C = 2", font_size=FS_MICRO, color=TEAL)
+    clab.next_to(centre, DOWN, buff=0.20)
+    ltitle = MathTex(r"\ln A+\ln B+\ln C=\ln 8", font_size=FS_LABEL, color=INK)
+    ltitle.next_to(ax, UP, buff=0.22)
+    lnote = Text("a product constraint is a plane in log-space",
+                 font_size=FS_MICRO, color=MUTED)
+    lnote.next_to(ax, DOWN, buff=0.34)
+    return stage_fit(Group(head, ax, family, heavy, centre, clab, hlab, ltitle, lnote,
+                          right, rlab, rtitle))
+
+
+# ---------------------------------------------------------------------------
+# panel 4 - the case split as a partition of the domain
+# ---------------------------------------------------------------------------
+def panel_cases() -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 4 · the case split is just a partition")
+    ax = Axes(x_range=[0, 6, 1], y_range=[0, 6, 1], x_length=5.6, y_length=5.0,
+              axis_config={"stroke_color": GRID, "stroke_width": 2.2,
+                           "include_tip": False})
+    ax.move_to([-3.1, 0.15, 0.0])
+    case1 = Polygon(ax.c2p(0, 6), ax.c2p(3, 3), ax.c2p(6, 6),
+                    stroke_width=2, stroke_color=TEAL, fill_color=TEAL,
+                    fill_opacity=0.22)
+    case2 = Polygon(ax.c2p(0, 0), ax.c2p(3, 3), ax.c2p(0, 6),
+                    stroke_width=2, stroke_color=AMBER, fill_color=AMBER,
+                    fill_opacity=0.20)
+    split = DashedLine(ax.c2p(0, 6), ax.c2p(3, 3), color=INK, stroke_width=2.6,
+                       dash_length=0.14)
+    hyper = VGroup()
+    for p, col in ((1.0, VIOLET), (3.0, VIOLET)):
+        aa = np.linspace(0.02, min(3.0, p), 220)
+        ok = aa + p / aa < 6.0
+        aa = aa[ok]
+        hyper.add(ax.plot(lambda t, p=p: p / t, x_range=[aa.min(), aa.max()],
+                          color=col, stroke_width=2.4))
+    c1 = Text("CASE 1", font_size=FS_LABEL, color=TEAL, weight=BOLD)
+    c1.move_to(ax.c2p(4.6, 5.0))
+    c1b = MathTex(r"A+B\ge6", font_size=FS_MICRO, color=TEAL)
+    c1b.next_to(c1, DOWN, buff=0.12)
+    c2 = Text("CASE 2", font_size=FS_LABEL, color=AMBER, weight=BOLD)
+    c2.move_to(ax.c2p(0.95, 2.3))
+    c2b = MathTex(r"A+B<6", font_size=FS_MICRO, color=AMBER)
+    c2b.next_to(c2, DOWN, buff=0.12)
+    plab = MathTex(r"AB=1", font_size=FS_MICRO, color=VIOLET)
+    plab.next_to(ax.c2p(0.55, 1 / 0.55), RIGHT, buff=0.10)
+    plab2 = MathTex(r"AB=3", font_size=FS_MICRO, color=VIOLET)
+    plab2.next_to(ax.c2p(1.3, 3 / 1.3), RIGHT, buff=0.10)
+    wlog = Text("shown for A ≤ B, the ordering we may assume", font_size=FS_MICRO,
+                color=MUTED)
+    wlog.next_to(ax, DOWN, buff=0.26)
+
+    rows = VGroup(
+        Text("p = AB ≤ 1        sharp lemma", font_size=FS_MICRO, color=AMBER),
+        Text("1 < p ≤ 3        slack available", font_size=FS_MICRO, color=AMBER),
+        Text("3 < p < 8        slack available", font_size=FS_MICRO, color=AMBER),
+        Text("p = AB > 8       impossible when A + B < 6", font_size=FS_MICRO,
+             color=MUTED),
+    ).arrange(DOWN, buff=0.24, aligned_edge=LEFT)
+    rows.move_to([3.3, 0.35, 0.0])
+    rtitle = Text("how Case 2 is split", font_size=FS_LABEL, color=INK)
+    rtitle.next_to(rows, UP, buff=0.26).align_to(rows, LEFT)
+    return stage_fit(VGroup(head, ax, case2, case1, split, hyper, c1, c1b, c2, c2b,
+                            plab, plab2, wlog, rtitle, rows))
+
+
+# ---------------------------------------------------------------------------
+# panel 5 - the sampling evidence
+# ---------------------------------------------------------------------------
+def panel_stats() -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 5 · ten thousand samples, and what they cannot prove")
+    rows = VGroup()
+    for label, value, col in (
+        ("samples", f"{STATS['n']:,}", INK),
+        ("minimum f", f"{STATS['min']:.10f}", TEAL),
+        ("maximum f", f"{STATS['max']:.10f}", CORAL),
+        ("mean f", f"{STATS['mean']:.10f}", INK),
+        ("variance", f"{STATS['var']:.10f}", INK),
+    ):
+        rows.add(VGroup(
+            Text(label, font_size=FS_LABEL, color=MUTED),
+            Text(value, font_size=FS_LABEL, color=col, weight=BOLD),
+        ).arrange(RIGHT, buff=0.9, aligned_edge=LEFT))
+    rows.arrange(DOWN, buff=0.30, aligned_edge=LEFT)
+    tbl = card(rows, 6.6)
+    tbl.move_to([-4.0, 0.9, 0.0])
+
+    counts = VGroup(*[
+        Rectangle(width=0.155, height=float(c) / HIST.max() * 2.5,
+                  stroke_width=0, fill_color=TEAL, fill_opacity=0.85)
+        for c in HIST
+    ])
+    for i, bar in enumerate(counts):
+        bar.move_to([-1.15 + 0.175 * i, -1.35 + bar.height / 2, 0.0])
+    base = Line([-1.35, -1.35, 0], [3.45, -1.35, 0], color=GRID, stroke_width=2)
+    span = HIST_EDGES[-1] - HIST_EDGES[0]
+    left_edge = counts[0].get_left()[0]
+    right_edge = counts[-1].get_right()[0]
+    for value, col in ((1.0, TEAL), (2.0, CORAL)):
+        pos = left_edge + (value - 1.0) / span * (right_edge - left_edge)
+        marker = DashedLine([pos, -1.35, 0], [pos, 1.35, 0], color=col, stroke_width=2.2,
+                            dash_length=0.12)
+        lab = MathTex(rf"{value:.0f}", font_size=FS_MICRO, color=col)
+        lab.move_to([pos, 1.55, 0.0])
+        counts.add(marker, lab)
+    htitle = Text("distribution of f over the samples", font_size=FS_LABEL, color=INK)
+    htitle.move_to([1.0, 1.95, 0.0])
+    hnote = Text(f"{STATS['below']} samples at or below 1     "
+                 f"{STATS['above']} samples at or above 2",
+                 font_size=FS_MICRO, color=MUTED)
+    hnote.move_to([1.0, -1.95, 0.0])
+
+    caveat = Text("evidence, not proof: the closest approach to 2 was within 5e-6",
+                  font_size=FS_MICRO, color=VIOLET)
+    caveat.next_to(tbl, DOWN, buff=0.34)
+    return stage_fit(VGroup(head, tbl, caveat, htitle, base, counts, hnote))
+
+
+# ---------------------------------------------------------------------------
+# panel 6 - sharpness
+# ---------------------------------------------------------------------------
+def panel_sharp() -> VGroup:
+    head = title_bar("05  PICTURES", "Panel 6 · both constants are optimal")
+    left = VGroup(
+        Text("x, a → +∞", font_size=FS_LABEL, color=MUTED),
+        MathTex(r"\phi(x)\to0,\quad \phi(a)\to0,\quad"
+                r"\sqrt{\tfrac{ax}{ax+8}}\to1", font_size=30, color=INK),
+        MathTex(r"f\to1\ \text{from above}", font_size=40, color=TEAL),
+    ).arrange(DOWN, buff=0.26)
+    right = VGroup(
+        Text("x, a → 0⁺", font_size=FS_LABEL, color=MUTED),
+        MathTex(r"\phi(x)\to1,\quad \phi(a)\to1,\quad"
+                r"\sqrt{\tfrac{ax}{ax+8}}\to0", font_size=30, color=INK),
+        MathTex(r"f\to2\ \text{from below}", font_size=40, color=CORAL),
+    ).arrange(DOWN, buff=0.26)
+    pair = VGroup(left, right).arrange(RIGHT, buff=1.1)
+    pair.move_to([0.0, 0.55, 0.0])
+    verdict = MathTex(r"\inf f=1\qquad\sup f=2\qquad\text{neither attained}",
+                      font_size=44, color=INK)
+    verdict.next_to(pair, DOWN, buff=0.55)
+    forced = VGroup(
+        Text("so 1.0001 would be false, 1.9999 would be false,", font_size=FS_LABEL,
+             color=MUTED),
+        Text("and the statement must use strict inequalities", font_size=FS_LABEL,
+             color=AMBER),
+    ).arrange(DOWN, buff=0.16)
+    forced.next_to(verdict, DOWN, buff=0.34)
+    return stage_fit(VGroup(head, pair, verdict, forced))
+
+
+# ---------------------------------------------------------------------------
+# closing pictures for sections 15-27
+# ---------------------------------------------------------------------------
+def frame_15() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "First, where the danger lives")
+    ax = Axes(x_range=[0, 12, 3], y_range=[0, 2.1, 0.5], x_length=6.4, y_length=4.3,
+              axis_config={"stroke_color": GRID, "stroke_width": 2.2,
+                           "include_tip": False})
+    ax.move_to([-2.9, 0.1, 0.0])
+    path = ax.plot(lambda t: t, x_range=[0.35, 2.02], color=VIOLET, stroke_width=4)
+    mark = Dot(ax.c2p(1.1, 1.1), color=VIOLET, radius=0.09)
+    top = DashedLine(ax.c2p(0, 2), ax.c2p(12, 2), color=CORAL, stroke_width=2.6,
+                     dash_length=0.14)
+    toplab = MathTex(r"f=2", font_size=FS_LABEL, color=CORAL)
+    toplab.next_to(top, UP, buff=0.10)
+    read = Text("f = 1.99...", font_size=FS_WORK, color=CORAL)
+    read.move_to([2.6, 1.05, 0.0])
+    warn = VGroup(
+        Text("x, a → 0⁺", font_size=FS_LABEL, color=VIOLET),
+        Text("the sum approaches 2 from below", font_size=FS_MICRO, color=MUTED),
+        Text("and would cross it if we were careless", font_size=FS_MICRO, color=CORAL),
+        Text("⇒ the proof must be sharp exactly here", font_size=FS_LABEL, color=AMBER),
+    ).arrange(DOWN, buff=0.20, aligned_edge=LEFT)
+    warn.move_to([2.6, -0.75, 0.0])
+    return stage_fit(VGroup(head, ax, path, mark, top, toplab, read, warn))
+
+
+def frame_16() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "Case 1 · A + B ≥ 6")
+    bars = VGroup()
+    for i, (nm, val, txt, col) in enumerate((
+        ("A", 2.0, r"A\le2", TEAL),
+        ("B", 4.0, r"B\ge6-A\ge4", BLUE),
+        ("C", 4.0, r"C\ge B\ge4", BLUE),
+    )):
+        y = 1.85 - 1.15 * i
+        base = Line([-6.3, y, 0], [-1.1, y, 0], color=GRID, stroke_width=2)
+        full = Rectangle(width=5.2, height=0.30, stroke_width=0, fill_color=GRID,
+                         fill_opacity=0.35).move_to([-3.7, y, 0])
+        bar = Rectangle(width=5.2 * val / 6.0, height=0.30, stroke_width=0,
+                        fill_color=col, fill_opacity=0.9).move_to(
+            [-6.3 + 5.2 * val / 12.0, y, 0])
+        lab = MathTex(nm, font_size=FS_LABEL, color=MUTED).move_to([-6.75, y, 0])
+        val_ = MathTex(txt, font_size=FS_LABEL, color=col).move_to([-1.1 + 0.55, y, 0])
+        bars.add(VGroup(base, full, bar, lab, val_))
+    chain = VGroup(
+        MathTex(r"f=\phi(A)+\phi(B)+\phi(C)", font_size=36, color=INK),
+        MathTex(r"<\ 1+\tfrac{1}{\sqrt5}+\tfrac{1}{\sqrt5}", font_size=36, color=AMBER),
+        MathTex(r"=1+\tfrac{2}{\sqrt5}=1.8944\ldots<2", font_size=36, color=TEAL),
+    ).arrange(DOWN, buff=0.24)
+    chain.move_to([3.6, 0.55, 0.0])
+    why = Text("2/√5 < 1 because 4 < 5", font_size=FS_MICRO, color=MUTED)
+    why.next_to(chain, DOWN, buff=0.26)
+    return stage_fit(VGroup(head, bars, chain, why))
+
+
+def frame_17() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "Case 2 · A + B < 6")
+    known = VGroup(
+        MathTex(r"\phi(C)=\sqrt{\tfrac{p}{p+8}}\ \ \text{exactly}", font_size=34,
+                color=TEAL),
+        MathTex(r"\phi(A)+\phi(B)\le\sqrt{\tfrac{2(2+s)}{1+s+p}}"
+                r"\ \ \text{(Cauchy)}", font_size=34, color=BLUE),
+        MathTex(r"p=AB<A(6-A)\le8\ \Rightarrow\ 0<p<8", font_size=34, color=AMBER),
+    ).arrange(DOWN, buff=0.30)
+    known.move_to([-3.3, 0.55, 0.0])
+    master = card(MathTex(
+        r"f<\sqrt{\tfrac{2(2+s)}{1+s+p}}+\sqrt{\tfrac{p}{p+8}}",
+        font_size=40, color=INK), 7.0, AMBER)
+    master.move_to([3.5, 1.35, 0.0])
+    ax = Axes(x_range=[0, 2.2, 0.5], y_range=[0, 9, 2], x_length=3.4, y_length=2.6,
+              axis_config={"stroke_color": GRID, "stroke_width": 1.8,
+                           "include_tip": False})
+    ax.move_to([3.4, -1.35, 0.0])
+    par = ax.plot(lambda t: t * (6 - t), x_range=[0, 2], color=AMBER, stroke_width=4)
+    pardot = Dot(ax.c2p(2, 8), color=CORAL, radius=0.08)
+    parl = Text("peak 8 at A = 2", font_size=FS_MICRO, color=CORAL)
+    parl.next_to(pardot, RIGHT, buff=0.10)
+    return stage_fit(VGroup(head, known, master, ax, par, pardot, parl))
+
+
+def frame_18() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "The sharp sub-case, and one lemma")
+    mono = MathTex(r"\tfrac{d}{ds}\!\left[\tfrac{2+s}{1+s+p}\right]"
+                   r"=\tfrac{p-1}{(1+s+p)^2}\le0\quad(p\le1)",
+                   font_size=34, color=BLUE)
+    atmin = MathTex(r"\Rightarrow\ \phi(A)+\phi(B)\le"
+                    r"\sqrt{\tfrac{2(2+2\sqrt p)}{(1+\sqrt p)^2}}"
+                    r"=\tfrac{2}{\sqrt{1+\sqrt p}}", font_size=34, color=INK)
+    atmin.next_to(mono, DOWN, buff=0.26)
+    lemma = card(VGroup(
+        MathTex(r"\textbf{LEMMA}\quad"
+                r"\frac{2}{\sqrt{1+q}}+\frac{q}{\sqrt{q^2+8}}<2"
+                r"\quad\text{for every }q>0", font_size=40, color=INK)), 12.2, VIOLET)
+    lemma.next_to(atmin, DOWN, buff=0.34)
+    proof = VGroup(
+        MathTex(r"2-\tfrac{2}{\sqrt{1+q}}=\tfrac{2q}{1+q+\sqrt{1+q}}"
+                r"\quad\text{(rationalise)}", font_size=30, color=INK),
+        MathTex(r"1+q+\sqrt{1+q}\le2+\tfrac32q"
+                r"\quad\text{since }\sqrt{1+q}\le1+\tfrac q2", font_size=30, color=INK),
+        MathTex(r"4(q^2+8)-(2+\tfrac32q)^2=\tfrac74q^2-6q+28>0"
+                r"\quad(\Delta=-160<0)", font_size=30, color=TEAL),
+    ).arrange(DOWN, buff=0.20, aligned_edge=LEFT)
+    proof.next_to(lemma, DOWN, buff=0.30)
+    return stage_fit(VGroup(head, mono, atmin, lemma, proof))
+
+
+def frame_19() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "The rest of Case 2, where slack is available")
+    header = VGroup(*[
+        Text(t, font_size=FS_MICRO, color=MUTED, weight=BOLD)
+        for t in ("sub-range", "first two terms", "third term", "total")
+    ])
+    header.arrange(RIGHT, buff=0.55, aligned_edge=UP)
+    body = VGroup()
+    specs = (
+        (r"p\le1", r"\tfrac{2}{\sqrt{1+\sqrt p}}", r"\sqrt{\tfrac{p}{p+8}}",
+         r"<2\ \text{(Lemma)}", TEAL),
+        (r"1<p\le3", r"\sqrt2", r"\sqrt{\tfrac3{11}}", r"1.9364<2", AMBER),
+        (r"3<p<8", r"\tfrac4{\sqrt{10}}", r"\tfrac1{\sqrt2}", r"1.9720<2", AMBER),
+    )
+    for a, b, c, d, col in specs:
+        body.add(VGroup(
+            MathTex(a, font_size=FS_MICRO, color=INK),
+            MathTex(b, font_size=FS_MICRO, color=BLUE),
+            MathTex(c, font_size=FS_MICRO, color=VIOLET),
+            MathTex(d, font_size=FS_MICRO, color=col),
+        ).arrange(RIGHT, buff=0.55, aligned_edge=UP))
+    body.arrange(DOWN, buff=0.34, aligned_edge=UP)
+    table = VGroup(header, body).arrange(DOWN, buff=0.30, aligned_edge=UP)
+    exact = VGroup(
+        Text("the last two rows are exact, not numerical:", font_size=FS_MICRO,
+             color=MUTED),
+        MathTex(r"63>44\sqrt2\ (3969>3872)", font_size=FS_MICRO, color=AMBER),
+        MathTex(r"2.9>2\sqrt2\ (8.41>8)", font_size=FS_MICRO, color=AMBER),
+    ).arrange(DOWN, buff=0.16, aligned_edge=LEFT)
+    exact.next_to(table, DOWN, buff=0.34).align_to(table, LEFT)
+    whole = VGroup(table, exact)
+    whole.move_to([0.0, 0.4, 0.0])
+    return stage_fit(VGroup(head, whole))
+
+
+def frame_20() -> VGroup:
+    head = title_bar("05  UPPER BOUND", "Upper bound closed")
+    verdict = verdict_tex(r"f(x,a)", 88)
+    verdict.move_to([0.0, 0.75, 0.0])
+    sub = MathTex(r"A=x,\quad B=a,\quad C=\tfrac{8}{AB},\quad ABC=8",
+                  font_size=34, color=MUTED)
+    sub.next_to(verdict, DOWN, buff=0.50)
+    beat = Text("both bounds closed. now let us look at it.", font_size=FS_LABEL,
+                color=VIOLET)
+    beat.next_to(sub, DOWN, buff=0.28)
+    return stage_fit(VGroup(head, verdict, sub, beat))
+
+
+FRAME_BUILDERS.update({
+    "S15": frame_15, "S16": frame_16, "S17": frame_17, "S18": frame_18,
+    "S19": frame_19, "S20": frame_20, "S21": panel_contour, "S22": panel_slice,
+    "S23": panel_logspace, "S24": panel_cases, "S25": panel_stats,
+    "S26": panel_sharp,
+})
+
+
+def frame_27() -> VGroup:
+    head = title_bar("05  CLOSE", "The whole proof on one screen")
+    col = VGroup(
+        MathTex(r"A=x,\ B=a,\ C=\tfrac{8}{AB}\ \Rightarrow\ ABC=8", font_size=32,
+                color=AMBER),
+        MathTex(r"f=\phi(A)+\phi(B)+\phi(C)", font_size=32, color=INK),
+        MathTex(r"f>\tfrac1{1+A}+\tfrac1{1+B}+\tfrac1{1+C}\ge1\quad(A+B+C\ge6)",
+                font_size=30, color=TEAL),
+        MathTex(r"A+B\ge6:\ f<1+\tfrac2{\sqrt5}<2", font_size=30, color=BLUE),
+        MathTex(r"A+B<6:\ p<8,\ \text{then }p\le1,\,1<p\le3,\,3<p<8",
+                font_size=30, color=BLUE),
+    ).arrange(DOWN, buff=0.26, aligned_edge=LEFT)
+    col.move_to([-0.4, 0.55, 0.0])
+    verdict = verdict_tex("f", 64)
+    verdict.next_to(col, DOWN, buff=0.40).align_to(col, RIGHT)
+    foot = Text("verification/verify_math.py — 24/24 checks pass", font_size=FS_MICRO,
+                color=MUTED)
+    foot.next_to(col, DOWN, buff=0.70).align_to(col, LEFT)
+    return stage_fit(VGroup(head, col, verdict, foot))
+
+
+FRAME_BUILDERS["S27"] = frame_27
+
+
+class Gaokao22Scene(Scene):
+    """The whole movie, in twenty-seven chained sections."""
+
     def pause(self, seconds: float) -> None:
-        """A narration pause; recorded so the budget assertion can check it."""
+        """A narration beat; recorded so the budget assertion can check it."""
         self.wait(seconds)
         self._pause_log[-1].append(round(float(seconds), 3))
 
-    def fade_all(self, run_time: float) -> None:
-        """Clear the stage between sections."""
-        if self.mobjects:
-            self.play(*[FadeOut(mob) for mob in list(self.mobjects)], run_time=run_time)
+    def say(self, key: str) -> None:
+        """Deliver one transcript line, as narration or as an on-screen caption."""
+        text, dur = BEATS[key]
+        if CAPTIONS:
+            bar = caption_bar(text)
+            self.add(bar)
+            self.pause(dur)
+            self.remove(bar)
+        else:
+            self.pause(dur)
 
-    def carded(self, mob, at):
-        """Wrap mob in a translucent HUD card pinned to the frame."""
-        mob.move_to(at)
-        card = BackgroundRectangle(mob, fill_opacity=0.7, buff=0.14)
-        group = VGroup(card, mob)
-        self.add_fixed_in_frame_mobjects(group)
-        return group
-
-    def header(self, text: str) -> Text:
-        return Text(text, font_size=36, color=WHITE, font=FONT).scale(0.70)
-
-    def formula(self, tex: str) -> MathTex:
-        return MathTex(tex, font_size=28, color=WHITE).scale(0.50)
-
-    def note(self, text: str) -> Text:
-        return Text(text, font_size=20, color=DIM, font=FONT).scale(0.38)
+    def finish(self, target: Mobject, *extras: Mobject) -> None:
+        """Retire the working mobjects and leave exactly ``target`` on screen."""
+        drops = [FadeOut(m) for m in extras if m in self.mobjects]
+        body = [m for m in self.mobjects if m not in extras]
+        anims = drops + ([FadeTransform(body[0], target)] if body
+                         else [FadeIn(target)])
+        self.play(*anims, run_time=0.8)
+        self.wait(0.6)
 
     def construct(self) -> None:
-        self._pause_log: list[list[float]] = []
-        self.camera.background_color = "#0B0E14"
-        self.set_camera_orientation(phi=65 * DEGREES, theta=-52 * DEGREES, zoom=1.6)
-
-        only = os.environ.get("HOPF_ONLY")
-        if only:
-            self.run_section(only.strip().upper())
+        self._pause_log = []
+        self.camera.background_color = BG
+        if ONLY:
+            self.run_section(ONLY.strip().upper())
             return
-
-        for index in range(1, len(SCENE_BUDGET) + 1):
+        for index in range(1, SECTION_COUNT + 1):
             self.next_section(f"S{index}")
+            self._pause_log.append([])
             getattr(self, f"scene_{index}")()
-
         self.verify_budget()
 
     def run_section(self, name: str) -> None:
-        """Render one scene in isolation. Used by CI and by HOPF_ONLY=... .
-
-        Manim's ``-n`` flag takes animation indices, not section names, so
-        chunked rendering goes through this instead. Every scene is written to
-        stand on its own, so S8 rebuilds the structure rather than inheriting
-        it from S7.
-        """
+        """Render one section in isolation. Used by CI and by GAOKAO_ONLY=... ."""
         if not name.startswith("S"):
             name = f"S{name}"
-        if name not in SCENE_BUDGET:
-            raise SystemExit(f"unknown scene {name!r}; expected S1..S9")
+        if not 1 <= int(name[1:]) <= SECTION_COUNT:
+            raise SystemExit(f"unknown section {name!r}; expected S1..S{SECTION_COUNT}")
         self.next_section(name)
+        self._pause_log = [[]]
         getattr(self, f"scene_{name[1:]}")()
         self.verify_budget(names=[name])
 
     def verify_budget(self, names: list[str] | None = None) -> None:
-        """Fail loudly if the movie no longer matches the narration script."""
+        """Fail loudly if the movie no longer matches the transcript."""
         selected = list(SCENE_BUDGET) if names is None else names
         if len(self._pause_log) != len(selected):
             raise AssertionError(
-                f"ran {len(self._pause_log)} scenes, expected {len(selected)}"
+                f"ran {len(self._pause_log)} sections, expected {len(selected)}"
             )
         for name, logged in zip(selected, self._pause_log):
-            duration, animation, waits = SCENE_BUDGET[name]
-            if logged != waits:
-                raise AssertionError(f"{name}: pauses {logged} != script {waits}")
-            if abs(animation + sum(waits) - duration) > 1e-6:
-                raise AssertionError(f"{name}: duration drift")
+            if logged != SCENE_BUDGET[name]:
+                raise AssertionError(
+                    f"{name}: pauses {logged} != transcript {SCENE_BUDGET[name]}"
+                )
 
-    # ------------------------------------------------------------------
-    # S1 -- cold open
-    # ------------------------------------------------------------------
     def scene_1(self) -> None:
-        self._pause_log.append([])
-
-        title = Text(
-            "THE HOPF FIBRATION", font_size=36, color=WHITE, font=FONT
-        ).to_edge(__import__("manim").UP, buff=2.0)
-        subtitle = Text(
-            "every circle linked to every other",
-            font_size=28,
-            color=DIM,
-            font=FONT,
-        ).next_to(title, __import__("manim").DOWN, buff=0.5)
-        opener = VGroup(title, subtitle)
-        self.play(FadeIn(opener), run_time=2.0)
-        self.pause(3.0)
-        self.play(FadeOut(opener), run_time=1.0)
-        self.pause(3.0)
-
-        palette = [CYAN, CORAL, SKY, MINT, GOLD, LILAC]
-        cluster = [make_fiber(1.0, TAU * k / 6 + 0.35, color) for k, color in enumerate(palette)]
-        self.play(Create(cluster[0]), run_time=3.0)
-        self.pause(2.0)
-        self.play(Create(VGroup(cluster[1], cluster[2])), run_time=5.0)
-        self.pause(3.0)
-        self.play(Create(VGroup(cluster[3], cluster[4], cluster[5])), run_time=6.0)
-
-        self.begin_ambient_camera_rotation(rate=0.10, about="phi")
-        self.pause(10.0)
-
-        caption = self.carded(
-            self.note("no two touch  ·  every pair linked"),
-            __import__("manim").DOWN * 3.0,
+        dots = VGroup(*[
+            Dot(np.array([x, y, 0.0]), radius=0.011, color=GRID)
+            for x in np.arange(-6.6, 6.7, 0.55)
+            for y in np.arange(-2.2, 2.3, 0.55)
+        ])
+        self.add(dots)
+        self.say("s01.b1")
+        self.say("s01.b2")
+        head = Text("2008 Jiangxi Gaokao  ·  Q22", font_size=FS_LABEL,
+                    color=MUTED, weight=BOLD)
+        verdict = verdict_tex(r"f(x,a)", 76)
+        domain = MathTex(r"x,\,a\;>\;0", font_size=FS_WORK, color=MUTED)
+        stack = VGroup(head, verdict, domain).arrange(DOWN, buff=0.28)
+        stack.move_to([0.0, 0.55, 0.0])
+        self.play(FadeIn(head, shift=UP * 0.2), run_time=0.7)
+        self.play(Write(verdict), run_time=1.6)
+        self.play(FadeIn(domain), run_time=0.5)
+        self.say("s01.b3")
+        self.play(Indicate(verdict, color=TEAL, scale_factor=1.03), run_time=1.0)
+        self.say("s01.b4")
+        expr = MathTex(
+            r"f(x,a)=\frac{1}{\sqrt{1+x}}+\frac{1}{\sqrt{1+a}}"
+            r"+\sqrt{\frac{ax}{ax+8}}",
+            font_size=40, color=INK,
         )
-        self.play(FadeIn(caption), run_time=1.0)
-        self.pause(4.0)
-        self.play(FadeOut(caption), run_time=1.0)
-        self.pause(6.0)
-        self.stop_ambient_camera_rotation()
+        self.play(Write(expr), run_time=2.0)
+        expr.next_to(stack, DOWN, buff=0.55)
+        self.say("s01.b5")
+        self.say("s01.b6")
+        self.finish(frame_01(), dots)
 
-    # ------------------------------------------------------------------
-    # S2 -- the spheres
-    # ------------------------------------------------------------------
     def scene_2(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
+        prev = frame_01()
+        self.add(prev)
+        self.say("s02.b1")
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        left = Axes(x_range=[0, 40, 10], y_range=[0, 1.1, 0.5], x_length=3.5,
+                    y_length=2.5, axis_config={"include_ticks": False,
+                                               "stroke_color": GRID,
+                                               "stroke_width": 2}, tips=False)
+        right = left.copy()
+        left.move_to([-4.3, -0.15, 0.0])
+        right.move_to([2.1, -0.15, 0.0])
+        c1 = left.plot(lambda t: PHI(min(t, 1e9)), x_range=[0, 40], color=BLUE,
+                       stroke_width=4)
+        c2 = right.plot(lambda t: np.sqrt(2 * min(t, 1e9) / (2 * min(t, 1e9) + 8)),
+                        x_range=[0, 40], color=VIOLET, stroke_width=4)
+        l1 = Text("first term", font_size=FS_MICRO, color=BLUE).next_to(c1, UP, buff=0.12)
+        l2 = Text("third term", font_size=FS_MICRO, color=VIOLET).next_to(c2, DOWN, buff=0.12)
+        self.play(FadeOut(working), run_time=0.6)
+        self.play(FadeIn(left), FadeIn(right), run_time=0.5)
+        self.play(Create(c1), run_time=1.3)
+        self.say("s02.b2")
+        self.play(Create(c2), run_time=1.3)
+        self.play(FadeIn(l1), FadeIn(l2), run_time=0.4)
+        clash = MathTex(r"\longleftarrow\ \textbf{fight}\ \longrightarrow",
+                        font_size=FS_LABEL, color=CORAL)
+        clash.move_to([-1.1, 1.35, 0.0])
+        self.play(FadeIn(clash), run_time=0.5)
+        self.say("s02.b3")
+        tail = MathTex(r"x\uparrow\ \Rightarrow\ \phi(x)\downarrow,\quad"
+                       r"\sqrt{\tfrac{ax}{ax+8}}\uparrow", font_size=FS_WORK, color=MUTED)
+        tail.move_to([0.0, -1.95, 0.0])
+        self.play(Write(tail), run_time=0.9)
+        self.say("s02.b4")
+        self.say("s02.b5")
+        self.finish(frame_02(), left, right, c1, c2, l1, l2, clash, tail)
 
-        self.fade_all(1.0)
-        self.pause(3.0)
-
-        header = self.carded(self.header("1 · THE SPHERES"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(3.0)
-
-        ring = Circle(radius=1.5, color=CYAN, stroke_width=4)
-        self.play(Create(ring), run_time=2.0)
-        label_one = self.carded(self.formula("S^{1}"), down * 3.0)
-        self.play(FadeIn(label_one), run_time=1.0)
-        self.pause(7.0)
-
-        shell = Sphere(radius=1.5, resolution=SPHERE_RESOLUTION)
-        shell.set_fill(CYAN, opacity=0.08)
-        shell.set_stroke(CYAN, 1.6)
-        shell.set_shade_in_3d(True)
-        self.play(ReplacementTransform(ring, shell), run_time=1.5)
-        self.pause(6.0)
-
-        label_two = self.carded(self.formula("S^{2}"), down * 3.0)
-        self.play(FadeIn(label_two), run_time=1.0)
-
-        equation = self.carded(
-            self.formula(r"|z_1|^2 + |z_2|^2 = 1"), up * 2.3
-        )
-        self.play(FadeIn(equation), run_time=1.5)
-        self.pause(6.0)
-
-        rings = VGroup(
-            *[
-                Circle(radius=0.9 + 0.25 * k, color=SKY, stroke_width=1.2)
-                for k in range(4)
-            ]
-        )
-        self.play(
-            LaggedStart(*[Create(ring) for ring in rings], lag_ratio=0.15),
-            run_time=4.0,
-        )
-        self.pause(7.0)
-
-        self.play(Indicate(equation, color=GOLD), run_time=2.0)
-        self.pause(7.0)
-
-        self.play(FadeOut(VGroup(shell, rings)), run_time=1.0)
-        self.pause(6.0)
-
-        header_two = self.carded(self.header("WHY S^3?"), up * 3.1)
-        self.play(FadeIn(header_two), run_time=1.0)
-        self.pause(7.0)
-
-        coordinates = self.carded(
-            self.formula(r"(x_1,\,x_2,\,x_3,\,x_4)\in\mathbb{R}^4"), up * 2.3
-        )
-        self.play(FadeIn(coordinates), run_time=1.0)
-        self.pause(7.0)
-
-        annotation = self.carded(
-            self.note("four numbers, one constraint"), down * 3.0
-        )
-        self.play(FadeIn(annotation), run_time=2.0)
-        self.pause(6.0)
-
-        self.play(FadeOut(VGroup(header_two, coordinates, annotation)), run_time=1.0)
-        self.pause(7.0)
-
-    # ------------------------------------------------------------------
-    # S3 -- stereographic projection
-    # ------------------------------------------------------------------
     def scene_3(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
-        left = __import__("manim").LEFT
+        prev = frame_02()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s03.b1")
+        ax = Axes(x_range=[0, 12, 3], y_range=[0, 1.1, 0.25], x_length=8.2,
+                  y_length=4.3, axis_config={"stroke_color": GRID,
+                                             "stroke_width": 2.4,
+                                             "include_tip": False})
+        ax.move_to([-1.2, 0.05, 0.0])
+        self.play(FadeOut(working), FadeIn(ax), run_time=0.8)
+        curve = ax.plot(lambda t: PHI(t), x_range=[0, 12], color=BLUE, stroke_width=5)
+        self.play(Create(curve), run_time=1.6)
+        self.say("s03.b2")
+        dot = Dot(ax.c2p(0, 1.0), color=TEAL, radius=0.07)
+        guide = DashedLine(ax.c2p(0, 1.0), ax.c2p(4.6, 1.0), color=TEAL,
+                           stroke_width=2, dash_length=0.12)
+        lbl = Text("phi(0) = 1", font_size=FS_LABEL, color=TEAL)
+        lbl.next_to(dot, RIGHT, buff=0.16)
+        self.play(FadeIn(dot), Create(guide), FadeIn(lbl), run_time=0.7)
+        self.say("s03.b3")
+        band = ax.plot(lambda t: PHI(t), x_range=[0, 1], color=BLUE, stroke_width=18)
+        band.set_opacity(0.18)
+        self.play(FadeIn(band), run_time=0.5)
+        self.say("s03.b4")
+        asym = MathTex(r"\phi(t)\sim t^{-1/2}", font_size=FS_WORK, color=AMBER)
+        asym.move_to([4.35, 1.75, 0.0])
+        slow = Text("dies slowly", font_size=FS_MICRO, color=MUTED)
+        slow.next_to(asym, DOWN, buff=0.12)
+        self.play(Write(asym), FadeIn(slow), run_time=0.9)
+        self.say("s03.b5")
+        self.finish(frame_03(), ax, curve, band, dot, guide, lbl, asym, slow)
 
-        self.fade_all(1.0)
-        self.pause(4.0)
-
-        header = self.carded(self.header("2 · STEREOGRAPHIC PROJECTION"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(7.0)
-
-        # -- 2D warm-up, pinned left, flat by design -------------------
-        center = left * 4.2 + up * 0.2
-        circle_2d = Circle(radius=1.6, color=CYAN, stroke_width=3).move_to(center)
-        pole = Dot(circle_2d.get_top(), radius=0.09, color=GOLD)
-        ground = Line(
-            left * 7.0 + down * 1.9, left * 1.4 + down * 1.9, color=DIM
-        )
-        sweep = ValueTracker(0.0)
-
-        def target() -> np.ndarray:
-            return circle_2d.point_at_angle(-PI / 2 + sweep.get_value() * PI * 0.999)
-
-        def projected() -> np.ndarray:
-            aim = target()
-            origin = pole.get_center()
-            vertical = aim[1] - origin[1]
-            if abs(vertical) < 1e-6:
-                return np.array([origin[0], GROUND_Y, 0.0])
-            factor = (GROUND_Y - origin[1]) / vertical
-            landing = origin + factor * (aim - origin)
-            return np.array(
-                [float(np.clip(landing[0], -6.9, -1.2)), GROUND_Y, 0.0]
-            )
-
-        runner = always_redraw(lambda: Dot(target(), radius=0.07, color=SKY))
-        ray = always_redraw(
-            lambda: Line(pole.get_center(), projected(), color=GOLD, stroke_width=2)
-        )
-        shadow = always_redraw(lambda: Dot(projected(), radius=0.09, color=MINT))
-
-        self.play(
-            FadeIn(circle_2d),
-            FadeIn(pole),
-            Create(ground),
-            FadeIn(runner),
-            FadeIn(ray),
-            FadeIn(shadow),
-            run_time=3.0,
-        )
-        self.pause(7.0)
-
-        self.play(sweep.animate.set_value(1.0), run_time=3.0)
-        self.pause(7.0)
-
-        pole_note = self.carded(
-            self.note("the north pole is the point at infinity"), down * 3.0
-        )
-        self.play(FadeIn(pole_note), run_time=1.5)
-        self.pause(7.0)
-
-        self.play(
-            FadeOut(VGroup(circle_2d, pole, ground, runner, ray, shadow)),
-            run_time=1.0,
-        )
-        self.pause(7.0)
-
-        # -- the real thing, in 3D ------------------------------------
-        globe = Sphere(radius=SPHERE_R, resolution=SPHERE_RESOLUTION)
-        globe.set_fill(CYAN, opacity=0.10)
-        globe.set_stroke(CYAN, 1.4)
-        globe.set_shade_in_3d(True)
-        north = Dot3D(point=np.array([0.0, 0.0, SPHERE_R]), color=GOLD, radius=0.05)
-        table = Rectangle(width=4.0, height=4.0, stroke_width=1.2)
-        table.set_fill(DIM, opacity=0.04)
-        table.set_stroke(DIM, 1.2)
-        table.move_to(np.array([0.0, 0.0, PLANE_Z]))
-        table.set_shade_in_3d(True)
-
-        def latitude(alpha_deg: float, color: str) -> Circle:
-            alpha = np.deg2rad(alpha_deg)
-            ring = Circle(
-                radius=SPHERE_R * float(np.sin(alpha)), color=color, stroke_width=2.0
-            )
-            ring.move_to(np.array([0.0, 0.0, SPHERE_R * float(np.cos(alpha))]))
-            ring.set_shade_in_3d(True)
-            return ring
-
-        def shadow_circle(alpha_deg: float, color: str) -> Circle:
-            disc = Circle(radius=shadow_radius(alpha_deg), color=color, stroke_width=2.0)
-            disc.move_to(np.array([0.0, 0.0, PLANE_Z]))
-            disc.set_shade_in_3d(True)
-            return disc
-
-        self.play(Create(globe), FadeIn(north), Create(table), run_time=2.0)
-        self.pause(8.0)
-
-        lat_a = latitude(120, SKY)
-        self.play(Create(lat_a), run_time=1.5)
-        self.pause(9.0)
-
-        shadow_a = shadow_circle(120, MINT)
-        self.play(Create(shadow_a), run_time=1.5)
-        self.pause(7.0)
-
-        lat_b = latitude(110, SKY)
-        shadow_b = shadow_circle(110, MINT)
-        self.play(Create(lat_b), Create(shadow_b), run_time=2.5)
-        self.pause(7.0)
-
-        lat_c = latitude(90, GOLD)
-        shadow_c = shadow_circle(90, MINT)
-        self.play(Create(lat_c), Create(shadow_c), run_time=2.5)
-        self.pause(7.0)
-
-        self.play(
-            Indicate(shadow_c, color=MINT),
-            FadeIn(self.carded(self.note("a circle stays a circle"), down * 3.0)),
-            run_time=1.0,
-        )
-        self.pause(7.0)
-
-        self.play(
-            FadeIn(
-                self.carded(
-                    self.note("closer to the pole, bigger shadow"), down * 2.4
-                )
-            ),
-            run_time=1.0,
-        )
-        self.pause(6.0)
-
-        self.play(
-            FadeOut(
-                VGroup(
-                    globe,
-                    north,
-                    table,
-                    lat_a,
-                    shadow_a,
-                    lat_b,
-                    shadow_b,
-                    lat_c,
-                    shadow_c,
-                    header,
-                )
-            ),
-            run_time=1.5,
-        )
-        self.pause(6.0)
-
-    # ------------------------------------------------------------------
-    # S4 -- one dimension up
-    # ------------------------------------------------------------------
     def scene_4(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
-        right = __import__("manim").RIGHT
+        prev = frame_03()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s04.b1")
+        ax = Axes(x_range=[0, 1, 0.25], y_range=[0, 1.15, 0.25], x_length=5.0,
+                  y_length=4.3, axis_config={"stroke_color": GRID,
+                                             "stroke_width": 2.4,
+                                             "include_tip": False})
+        ax.move_to([-3.4, 0.0, 0.0])
+        self.play(FadeOut(working), FadeIn(ax), run_time=0.8)
+        curve = ax.plot(lambda t: PHI(t), x_range=[0, 1], color=BLUE, stroke_width=5)
+        self.play(Create(curve), run_time=1.2)
+        self.say("s04.b2")
+        prev_bars = VGroup()
+        for n in (2, 4, 8, 16):
+            bars = VGroup(*ax.get_riemann_rectangles(
+                curve, x_range=(0, 1), dx=1.0 / n, color=BLUE,
+                fill_opacity=0.34, stroke_width=0))
+            if prev_bars.submobjects:
+                self.play(FadeTransform(prev_bars, bars), run_time=0.55)
+            else:
+                self.play(FadeIn(bars), run_time=0.55)
+            prev_bars = bars
+        self.say("s04.b3")
+        region = ax.get_area(curve, x_range=(0, 1), color=TEAL, opacity=0.24)
+        self.play(FadeTransform(prev_bars, region), run_time=0.8)
+        self.say("s04.b2b")
+        val = MathTex(r"\int_0^1\frac{dt}{\sqrt{1+t}}=2(\sqrt2-1)\approx0.828",
+                      font_size=FS_WORK, color=INK)
+        val.move_to([3.1, 1.55, 0.0])
+        self.play(Write(val), run_time=1.1)
+        self.say("s04.b4")
+        ceil = DashedLine(ax.c2p(0, 1.0), ax.c2p(1, 1.0), color=CORAL,
+                          stroke_width=2.6, dash_length=0.12)
+        clbl = Text("y = 1", font_size=FS_MICRO, color=CORAL).next_to(ceil, UP, buff=0.10)
+        self.play(Create(ceil), FadeIn(clbl), run_time=0.8)
+        self.say("s04.b5")
+        side = VGroup(
+            Text("the whole region fits", font_size=FS_LABEL, color=INK),
+            Text("strictly under y = 1", font_size=FS_LABEL, color=CORAL),
+            Text("so phi never reaches 1", font_size=FS_LABEL, color=TEAL),
+        ).arrange(DOWN, buff=0.18, aligned_edge=LEFT)
+        side.move_to([3.1, -0.45, 0.0])
+        self.play(FadeIn(side), run_time=0.6)
+        self.finish(frame_04(), ax, curve, region, ceil, clbl, val, side)
 
-        self.fade_all(1.0)
-        self.pause(5.0)
-
-        header = self.carded(self.header("3 · ONE DIMENSION UP"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(6.0)
-
-        ambient = Circle(radius=1.6, color=SKY, stroke_width=2.5)
-        ambient.set_shade_in_3d(True)
-        pole = Dot3D(point=ambient.get_top(), color=GOLD, radius=0.05)
-        self.play(Create(ambient), FadeIn(pole), run_time=1.0)
-        self.pause(7.0)
-
-        label = self.carded(self.formula(r"S^3 \simeq \mathbb{R}^4"), up * 2.3)
-        self.play(FadeIn(label), run_time=1.0)
-        self.pause(7.0)
-
-        equator = Circle(radius=1.4, color=SKY, stroke_width=2.5)
-        equator.set_shade_in_3d(True)
-        self.play(Create(equator), run_time=2.0)
-        self.pause(7.0)
-
-        rider = Dot3D(point=equator.point_at_angle(0), color=GOLD, radius=0.06)
-        self.play(FadeIn(rider), run_time=2.0)
-        self.pause(8.0)
-
-        shadow = Circle(radius=1.0, color=MINT, stroke_width=2.5)
-        shadow.set_shade_in_3d(True)
-        self.play(Create(shadow), run_time=1.5)
-        self.pause(7.0)
-
-        self.play(Indicate(VGroup(equator, shadow), color=WHITE), run_time=1.0)
-        self.pause(8.0)
-
-        tilted = Circle(radius=1.2, color=CORAL, stroke_width=2.5)
-        tilted.rotate(PI / 4, axis=right)
-        tilted.set_shade_in_3d(True)
-        self.play(Create(tilted), run_time=1.5)
-        self.pause(7.0)
-
-        tilted_shadow = Circle(radius=0.9, color=ROSE, stroke_width=2.5)
-        tilted_shadow.rotate(PI / 4, axis=right)
-        tilted_shadow.set_shade_in_3d(True)
-        self.play(Create(tilted_shadow), run_time=1.5)
-        self.pause(6.0)
-
-        caption = self.carded(
-            self.note("the equator of S^3 is this circle in space"), down * 3.0
-        )
-        self.play(FadeIn(caption), run_time=1.5)
-        self.pause(6.0)
-
-        self.play(FadeOut(VGroup(tilted, tilted_shadow)), run_time=0.5)
-        self.pause(4.0)
-
-        self.play(
-            FadeOut(VGroup(ambient, pole, equator, rider, shadow)), run_time=0.5
-        )
-        self.pause(4.5)
-
-    # ------------------------------------------------------------------
-    # S5 -- the Hopf map and its fibers
-    # ------------------------------------------------------------------
     def scene_5(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
+        prev = frame_04()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s05.b1")
+        left = VGroup()
+        circ = Circle(radius=1.45, color=GRID, stroke_width=2.4).move_to([-4.1, 0.55, 0])
+        hyp = Line([-5.55, 0.55, 0], [-2.65, 0.55, 0], color=MUTED, stroke_width=2)
+        l1 = Line([-4.1, 0.55, 0], [-5.15, -0.70, 0], color=BLUE, stroke_width=3.4)
+        l2 = Line([-4.1, 0.55, 0], [-3.05, -0.70, 0], color=VIOLET, stroke_width=3.4)
+        alt = DashedLine([-5.15, -0.70, 0], [-3.05, -0.70, 0], color=TEAL, stroke_width=2.4)
+        self.play(FadeOut(working), FadeIn(circ), FadeIn(hyp), run_time=0.7)
+        self.say("s05.b2")
+        self.play(Create(l1), Create(l2), run_time=0.9)
+        self.say("s05.b3")
+        la = Text("a", font_size=FS_MICRO, color=BLUE).move_to([-4.72, -0.5, 0])
+        lb = Text("b", font_size=FS_MICRO, color=VIOLET).move_to([-3.48, -0.5, 0])
+        lalt = Text("altitude = sqrt(ab)", font_size=FS_MICRO, color=TEAL)
+        lalt.next_to(alt, DOWN, buff=0.16)
+        self.play(Create(alt), FadeIn(la), FadeIn(lb), FadeIn(lalt), run_time=0.8)
+        self.say("s05.b4")
+        geo = MathTex(r"\sqrt{ab}\le\frac{a+b}{2}", font_size=FS_WORK, color=INK)
+        geo.move_to([-4.1, -1.72, 0.0])
+        gtag = Text("GEOMETRIC", font_size=FS_MICRO, color=MUTED, weight=BOLD)
+        gtag.next_to(geo, UP, buff=0.2)
+        self.play(Write(geo), FadeIn(gtag), run_time=0.8)
+        self.say("s05.b5")
+        ax = Axes(x_range=[0.2, 5, 1], y_range=[0, 6, 2], x_length=4.6, y_length=3.3,
+                  axis_config={"stroke_color": GRID, "stroke_width": 2,
+                               "include_tip": False})
+        ax.move_to([3.5, 0.6, 0])
+        g = ax.plot(lambda t: t + 1.0 / t, x_range=[0.2, 5], color=AMBER, stroke_width=4.4)
+        self.play(FadeIn(ax), Create(g), run_time=1.4)
+        self.say("s05.b6")
+        mn = Dot(ax.c2p(1, 2), color=TEAL, radius=0.07)
+        mg = DashedLine(ax.c2p(0.2, 2), ax.c2p(1, 2), color=TEAL, stroke_width=1.6)
+        ml = Text("min = 2 at t = 1", font_size=FS_MICRO, color=TEAL)
+        ml.next_to(mn, RIGHT, buff=0.14)
+        ana = MathTex(r"t+\tfrac1t\ge2\ \Longrightarrow\ a+b\ge2\sqrt{ab}",
+                      font_size=32, color=INK)
+        ana.move_to([3.5, -1.72, 0.0])
+        atag = Text("ANALYTIC", font_size=FS_MICRO, color=MUTED, weight=BOLD)
+        atag.next_to(ana, UP, buff=0.2)
+        self.play(FadeIn(mn), Create(mg), FadeIn(ml), run_time=0.7)
+        self.play(Write(ana), FadeIn(atag), run_time=0.9)
+        self.say("s05.b7")
+        self.finish(frame_05(), circ, hyp, l1, l2, alt, la, lb, lalt, geo, gtag,
+                    ax, g, mn, mg, ml, ana, atag)
 
-        self.fade_all(1.0)
-        self.pause(4.0)
+    def scene_6(self) -> None:
+        prev = frame_05()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.play(FadeOut(working), run_time=0.7)
+        self.say("s06.b1")
+        main = MathTex(r"A+B+C\ \ge\ 3\sqrt[3]{ABC}", font_size=60, color=INK)
+        main.move_to([0.0, 1.05, 0.0])
+        self.play(Write(main), run_time=1.4)
+        self.say("s06.b2")
+        eq = Text("equality exactly when A = B = C", font_size=FS_LABEL, color=TEAL)
+        eq.next_to(main, DOWN, buff=0.26)
+        self.play(FadeIn(eq), run_time=0.5)
+        self.say("s06.b3")
+        sub = MathTex(r"\sqrt[3]{8}=2\qquad\Longrightarrow\qquad A+B+C\ \ge\ 3\cdot2=6",
+                      font_size=44, color=AMBER)
+        sub.move_to([0.0, -0.95, 0.0])
+        self.play(TransformMatchingTex(main, sub), run_time=1.6)
+        self.say("s06.b4")
+        note6 = Text("remember the 6 — it appears twice, and it earns its keep twice",
+                     font_size=FS_LABEL, color=MUTED)
+        note6.next_to(sub, DOWN, buff=0.34)
+        self.play(FadeIn(note6), run_time=0.6)
+        self.finish(frame_06(), main, eq, sub, note6)
 
-        header = self.carded(self.header("4 · THE HOPF MAP"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(5.0)
+    def scene_7(self) -> None:
+        prev = frame_06()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s07.b1")
+        ax = Axes(x_range=[0, 10, 2], y_range=[0, 1.15, 0.25], x_length=5.4,
+                  y_length=3.7, axis_config={"stroke_color": GRID,
+                                             "stroke_width": 2.2,
+                                             "include_tip": False})
+        ax.move_to([-3.7, 0.15, 0])
+        self.play(FadeOut(working), FadeIn(ax), run_time=0.7)
+        self.say("s07.b2")
+        curve = ax.plot(lambda t: PHI(t), x_range=[0, 10], color=AMBER, stroke_width=5)
+        self.play(Create(curve), run_time=1.3)
+        dd = MathTex(r"\phi''(t)=\tfrac34(1+t)^{-5/2}>0", font_size=32, color=MUTED)
+        dd.move_to([3.5, 1.45, 0.0])
+        self.play(Write(dd), run_time=0.9)
+        self.say("s07.b3")
+        t0 = 3.0
+        slope = -0.5 * (1 + t0) ** -1.5
+        tang = ax.plot(lambda t: PHI(t0) + slope * (t - t0), x_range=[0, 10],
+                       color=CORAL, stroke_width=2.6)
+        th = ax.plot(lambda t: PHI(t0) + slope * (t - t0), x_range=[0, 3.0],
+                     color=CORAL, stroke_width=7)
+        th.set_opacity(0.5)
+        l1 = Text("curve above every tangent", font_size=FS_MICRO, color=TEAL)
+        l1.next_to(tang, UP, buff=0.16).shift(LEFT * 0.35)
+        l2 = Text("tangent line", font_size=FS_MICRO, color=CORAL)
+        l2.next_to(ax.c2p(8, PHI(8) + slope * 5), RIGHT, buff=0.10)
+        self.play(Create(th), Create(tang), run_time=1.1)
+        self.play(FadeIn(l1), FadeIn(l2), run_time=0.5)
+        self.say("s07.b4")
+        side = VGroup(
+            Text("as t → 0", font_size=FS_LABEL, color=MUTED),
+            MathTex(r"\phi(t)\to1", font_size=44, color=TEAL),
+            Text("from below, never touching", font_size=FS_MICRO, color=MUTED),
+        ).arrange(DOWN, buff=0.16)
+        side.move_to([3.5, -0.75, 0.0])
+        self.play(FadeIn(side), run_time=0.7)
+        self.say("s07.b5")
+        self.finish(frame_07(), ax, curve, tang, th, l1, l2, dd, side)
 
-        base_center = np.array([-3.4, 1.1, 0.0])
-        base_sphere = Sphere(radius=0.6, resolution=SPHERE_RESOLUTION_SMALL)
-        base_sphere.move_to(base_center)
-        base_sphere.set_fill(MINT, opacity=0.12)
-        base_sphere.set_stroke(MINT, 1.2)
-        base_sphere.set_shade_in_3d(True)
-        self.play(Create(base_sphere), run_time=2.0)
-        self.pause(7.0)
+    def scene_8(self) -> None:
+        prev = frame_07()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s08.b1")
+        o = np.array([0.0, 0.0, 0.0])
+        u = np.array([1.55, 1.15, 0.0])
+        v = np.array([2.25, -0.35, 0.0])
+        ua = Arrow(o, u, buff=0, color=BLUE, stroke_width=5,
+                   max_tip_length_to_length_ratio=0.09)
+        vv = Arrow(o, v, buff=0, color=VIOLET, stroke_width=5,
+                   max_tip_length_to_length_ratio=0.09)
+        self.play(FadeOut(working), FadeIn(ua), FadeIn(vv), run_time=0.9)
+        self.say("s08.b2")
+        proj_len = float(np.dot(u, v) / np.linalg.norm(v))
+        ph = v / np.linalg.norm(v) * proj_len
+        dashed = DashedLine(o, ph, color=TEAL, stroke_width=3, dash_length=0.1)
+        left = VGroup(ua, vv, dashed, Line(ph, u, color=CORAL, stroke_width=4))
+        left.move_to([-3.9, 0.15, 0.0])
+        lu = Text("u", font_size=FS_LABEL, color=BLUE).next_to(ua.get_end(), RIGHT, buff=0.08)
+        lv = Text("v", font_size=FS_LABEL, color=VIOLET).next_to(vv.get_end(), RIGHT, buff=0.08)
+        lproj = Text("projection", font_size=FS_MICRO, color=TEAL)
+        lperp = Text("leftover ≥ 0", font_size=FS_MICRO, color=CORAL)
+        self.play(Create(dashed), FadeIn(lproj), run_time=0.8)
+        self.play(FadeIn(lperp), FadeIn(lu), FadeIn(lv), run_time=0.5)
+        self.say("s08.b3")
+        l3 = MathTex(r"\bigl(\phi(A)+\phi(B)\bigr)^2\le 2\left(\tfrac1{1+A}+\tfrac1{1+B}\right)",
+                     font_size=36, color=INK)
+        l3.move_to([2.9, 1.55, 0.0])
+        self.play(Write(l3), run_time=1.3)
+        self.say("s08.b4")
+        l4 = MathTex(r"(1+A)(1+B)=1+s+p,\qquad s=A+B,\ p=AB", font_size=36, color=AMBER)
+        l4.move_to([2.9, 0.15, 0.0])
+        self.play(Write(l4), run_time=1.1)
+        self.say("s08.b5")
+        l5 = MathTex(r"\phi(A)+\phi(B)\ \le\ \sqrt{\frac{2(2+s)}{1+s+p}}",
+                     font_size=40, color=TEAL)
+        l5.move_to([2.9, -1.15, 0.0])
+        self.play(Write(l5), run_time=1.1)
+        self.finish(frame_08(), left, lu, lv, lproj, lperp, l3, l4, l5)
 
-        hopf = self.carded(
-            self.formula(
-                r"h(z_1,z_2)=\bigl(2\operatorname{Re}z_1\bar{z}_2,\;"
-                r"2\operatorname{Im}z_1\bar{z}_2,\;|z_1|^2-|z_2|^2\bigr)"
-            ),
-            down * 2.6,
+    def scene_9(self) -> None:
+        prev = frame_08()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        head = title_bar("03  SUBSTITUTION", "The third term was never a third term")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s09.b1")
+        top = MathTex(r"\sqrt{\frac{ax}{ax+8}}", font_size=64, color=VIOLET)
+        top.move_to([0.0, 1.5, 0.0])
+        self.play(Write(top), run_time=1.4)
+        self.say("s09.b2")
+        mid = MathTex(r"=\ \sqrt{\frac{1}{1+\frac{8}{ax}}}", font_size=48, color=INK)
+        mid.next_to(top, DOWN, buff=0.38)
+        self.play(Write(mid), run_time=1.4)
+        self.say("s09.b3")
+        defn = MathTex(r"=\ \frac{1}{\sqrt{1+C}}", font_size=48, color=INK)
+        defn.next_to(mid, DOWN, buff=0.30)
+        defn_tag = MathTex(r"C:=\frac{8}{ax}", font_size=48, color=AMBER)
+        defn_tag.next_to(defn, RIGHT, buff=0.45)
+        defn.next_to(mid, DOWN, buff=0.30)
+        self.play(Write(defn), run_time=1.4)
+        self.say("s09.b4")
+        whole = MathTex(
+            r"f=\phi(A)+\phi(B)+\phi(C),\qquad A=x,\ B=a,\ C=\frac{8}{AB}",
+            font_size=40, color=INK,
         )
-        self.play(FadeIn(hopf), run_time=2.0)
-        self.pause(7.0)
+        whole.next_to(defn, DOWN, buff=0.48)
+        self.play(Write(whole), run_time=1.5)
+        self.say("s09.b5")
+        self.say("s09.b6")
+        self.finish(frame_09(), head, top, mid, defn, defn_tag, whole)
 
-        fiber_formula = self.carded(
-            self.formula(
-                r"\mathrm{fiber}(p)=\{(e^{it}z_1,e^{it}z_2):t\in[0,2\pi)\}"
-            ),
-            down * 1.7,
-        )
-        self.play(FadeIn(fiber_formula), run_time=2.0)
-        self.pause(8.0)
+    def scene_10(self) -> None:
+        prev = frame_09()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s10.b1")
+        prod = MathTex(r"A\cdot B\cdot C=8", font_size=52, color=AMBER)
+        prod.move_to([0.0, 0.75, 0.0])
+        self.play(FadeOut(working), Write(prod), run_time=1.2)
+        self.say("s10.b2")
+        inner = VGroup(
+            MathTex(r"A,B,C>0,\qquad ABC=8", font_size=44, color=AMBER),
+            verdict_tex(r"\phi(A)+\phi(B)+\phi(C)", 48),
+        ).arrange(DOWN, buff=0.34)
+        box = card(inner, 11.6)
+        box.move_to([0.0, -0.55, 0.0])
+        self.play(FadeIn(box), run_time=0.8)
+        self.say("s10.b3")
+        why = Text("8 = 2³ — three terms, each naturally centred at 2",
+                   font_size=FS_LABEL, color=MUTED)
+        why.next_to(box, DOWN, buff=0.30)
+        self.play(FadeIn(why), run_time=0.6)
+        self.say("s10.b4")
+        gift = Text("and the problem just became symmetric — a gift we are about to spend",
+                    font_size=FS_LABEL, color=VIOLET)
+        gift.next_to(why, DOWN, buff=0.16)
+        self.play(FadeIn(gift), run_time=0.5)
+        self.finish(frame_10(), prod, box, why, gift)
 
-        fiber = make_fiber(0.9, 0.0, CORAL)
-        base_dot = Dot3D(point=base_center, color=GOLD, radius=0.06)
-        self.play(Create(fiber), FadeIn(base_dot), run_time=2.0)
-        self.pause(8.0)
-
-        sweep = ValueTracker(0.0)
-
-        def moving_base() -> np.ndarray:
-            angle = TAU * sweep.get_value()
-            return base_center + 0.6 * np.array([np.cos(angle), 0.0, np.sin(angle)])
-
-        base_follower = always_redraw(
-            lambda: Dot3D(moving_base(), color=GOLD, radius=0.06)
-        )
-        self.play(
-            FadeOut(base_dot),
-            FadeIn(base_follower),
-            sweep.animate.set_value(1.0),
-            fiber.animate.rotate(TAU, axis=up),
-            run_time=2.0,
-        )
-        self.pause(8.0)
-
-        self.play(
-            sweep.animate.set_value(0.0),
-            fiber.animate.rotate(TAU, axis=up),
+    def scene_11(self) -> None:
+        prev = frame_10()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s11.b1")
+        chips = VGroup()
+        for i, nm in enumerate(["A", "B", "C"]):
+            c = VGroup(
+                RoundedRectangle(corner_radius=0.14, width=1.5, height=1.5,
+                                 stroke_color=BLUE, stroke_width=2.4,
+                                 fill_color=BLUE, fill_opacity=0.12),
+                MathTex(nm, font_size=44, color=BLUE),
+            )
+            c.move_to([-3.1 + 3.1 * i, 1.55, 0.0])
+            chips.add(c)
+        self.play(FadeOut(working), LaggedStart(*[FadeIn(c) for c in chips],
+                                               lag_ratio=0.18), run_time=1.1)
+        self.say("s11.b2")
+        perm = AnimationGroup(
+            Transform(chips[0], chips[2].copy()),
+            Transform(chips[1], chips[0].copy()),
+            Transform(chips[2], chips[1].copy()),
             run_time=1.0,
         )
-        self.pause(7.0)
+        self.play(perm, run_time=1.0)
+        self.play(Transform(chips[0], chips[0].copy()), run_time=0.1)
+        swapnote = Text("the expression cannot tell them apart", font_size=FS_MICRO,
+                        color=MUTED)
+        swapnote.next_to(chips, DOWN, buff=0.24)
+        self.play(FadeIn(swapnote), run_time=0.5)
+        self.say("s11.b3")
+        wlog = MathTex(r"\mathrm{WLOG}\quad A\le B\le C", font_size=44, color=TEAL)
+        wlog.move_to([0.0, -0.55, 0.0])
+        self.play(Write(wlog), run_time=0.9)
+        cons = VGroup(
+            MathTex(r"A\le2", font_size=40, color=AMBER),
+            MathTex(r"2\le C", font_size=40, color=AMBER),
+        ).arrange(RIGHT, buff=1.5)
+        cons.move_to([0.0, -1.85, 0.0])
+        why = Text("from A³ ≤ ABC = 8", font_size=FS_MICRO, color=MUTED)
+        why.next_to(cons, DOWN, buff=0.16)
+        self.play(FadeIn(cons), FadeIn(why), run_time=0.7)
+        self.say("s11.b4")
+        self.finish(frame_11(), chips, swapnote, wlog, cons, why)
 
-        upper_fiber = make_fiber(1.3, 0.0, ROSE)
-        self.play(FadeOut(fiber), Create(upper_fiber), run_time=1.5)
-        self.pause(7.0)
+    def scene_12(self) -> None:
+        prev = frame_11()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        head = title_bar("04  LOWER BOUND", "Trade the square root for a rational function")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s12.b1")
+        ax = Axes(x_range=[0, 9, 3], y_range=[0, 1.15, 0.25], x_length=6.2,
+                  y_length=4.0, axis_config={"stroke_color": GRID,
+                                             "stroke_width": 2.2,
+                                             "include_tip": False})
+        ax.move_to([-3.1, 0.1, 0])
+        self.play(FadeIn(ax), run_time=0.6)
+        self.say("s12.b2")
+        c1 = ax.plot(lambda t: PHI(t), x_range=[0, 9], color=BLUE, stroke_width=5)
+        c2 = ax.plot(lambda t: 1.0 / (1.0 + t), x_range=[0, 9], color=AMBER, stroke_width=4)
+        self.play(Create(c1), run_time=1.2)
+        reason = VGroup(
+            Text("for t > 0 :", font_size=FS_LABEL, color=MUTED),
+            MathTex(r"1+t>\sqrt{1+t}", font_size=36, color=INK),
+        ).arrange(DOWN, buff=0.24, aligned_edge=LEFT)
+        reason.move_to([3.5, 1.35, 0.0])
+        self.play(Write(reason), run_time=1.0)
+        self.say("s12.b3")
+        l1 = Text("phi(t)", font_size=FS_LABEL, color=BLUE).next_to(c1, UP, buff=0.14)
+        l2 = Text("1/(1+t)", font_size=FS_LABEL, color=AMBER).next_to(c2, DOWN, buff=0.16)
+        self.play(Create(c2), FadeIn(l1), FadeIn(l2), run_time=1.1)
+        self.say("s12.b4")
+        gain = VGroup(
+            MathTex(r"\Longrightarrow\ \frac{1}{\sqrt{1+t}}>\frac{1}{1+t}",
+                    font_size=40, color=TEAL),
+            Text("one-sided, and in our favour", font_size=FS_MICRO, color=VIOLET),
+        ).arrange(DOWN, buff=0.24)
+        gain.move_to([3.5, -0.85, 0.0])
+        self.play(Write(gain), run_time=1.1)
+        self.finish(frame_12(), head, ax, c1, c2, l1, l2, reason, gain)
 
-        self.move_camera(
-            phi=70 * DEGREES, theta=-45 * DEGREES, zoom=0.9, run_time=2.0
+    def scene_13(self) -> None:
+        prev = frame_12()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        head = title_bar("04  LOWER BOUND", "Clear denominators — watch it collapse")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s13.b1")
+        l1 = MathTex(r"\frac1{1+A}+\frac1{1+B}+\frac1{1+C}\ \ge\ 1", font_size=44, color=INK)
+        l1.move_to([0.0, 1.95, 0.0])
+        self.play(Write(l1), run_time=1.2)
+        self.say("s13.b2")
+        l2 = MathTex(r"(1+B)(1+C)+(1+A)(1+C)+(1+A)(1+B)\ \ge\ (1+A)(1+B)(1+C)",
+                     font_size=30, color=MUTED)
+        l2.next_to(l1, DOWN, buff=0.34)
+        self.play(Write(l2), run_time=1.5)
+        self.say("s13.b3")
+        defs = Text("S = A+B+C ,  Q = AB+BC+CA", font_size=FS_MICRO, color=MUTED)
+        defs.next_to(l2, DOWN, buff=0.18).align_to(l2, RIGHT)
+        l3 = MathTex(r"3+2S+Q\ \ge\ 1+S+Q+ABC", font_size=40, color=INK)
+        l3.next_to(l2, DOWN, buff=0.46)
+        self.play(Write(l3), run_time=1.2)
+        self.say("s13.b4")
+        l4 = MathTex(r"3+2S+Q\ \ge\ 1+S+Q+8", font_size=40, color=AMBER)
+        l4.next_to(l3, DOWN, buff=0.24)
+        self.play(Write(l4), run_time=1.0)
+        self.say("s13.b5")
+        self.say("s13.b6")
+        l5 = MathTex(r"A+B+C\ \ge\ 6", font_size=54, color=AMBER)
+        l5.next_to(l4, DOWN, buff=0.30)
+        self.play(Write(l5), run_time=1.1)
+        self.say("s13.b7")
+        amg = MathTex(r"A+B+C\ \ge\ 3\sqrt[3]{ABC}=3\cdot2=6", font_size=38, color=TEAL)
+        amg.next_to(l5, DOWN, buff=0.34)
+        self.play(Write(amg), run_time=1.2)
+        self.finish(frame_13(), head, l1, l2, defs, l3, l4, l5, amg)
+
+    def scene_14(self) -> None:
+        prev = frame_13()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s14.b1")
+        chain = vchain([
+            MathTex(r"f", font_size=52, color=INK),
+            MathTex(r">", font_size=52, color=TEAL),
+            MathTex(r"\tfrac1{1+A}+\tfrac1{1+B}+\tfrac1{1+C}", font_size=44, color=INK),
+            MathTex(r"\ge\ 1", font_size=52, color=AMBER),
+        ])
+        chain.move_to([0.0, 0.85, 0.0])
+        self.play(FadeOut(working), LaggedStart(*[Write(c) for c in chain],
+                                               lag_ratio=0.22), run_time=2.0)
+        ring = Circle(radius=0.24, color=TEAL, stroke_width=3).move_to(chain[1].get_center())
+        self.play(Create(ring), run_time=0.6)
+        self.say("s14.b2")
+        verdict = MathTex(r"f\;>\;1", font_size=64, color=TEAL)
+        verdict.next_to(chain, DOWN, buff=0.60)
+        self.play(Write(verdict), run_time=1.0)
+        honesty = Text("slack to spare: at A=B=C=2 we get f = sqrt 3 ≈ 1.73, not 1",
+                       font_size=FS_LABEL, color=MUTED)
+        honesty.next_to(verdict, DOWN, buff=0.24)
+        self.play(FadeIn(honesty), run_time=0.6)
+        self.say("s14.b3")
+    def scene_15(self) -> None:
+        prev = frame_14()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s15.b1")
+        head = title_bar("05  UPPER BOUND", "First, where the danger lives")
+        ax = Axes(x_range=[0, 12, 3], y_range=[0, 2.1, 0.5], x_length=6.4, y_length=4.3,
+                  axis_config={"stroke_color": GRID, "stroke_width": 2.2,
+                               "include_tip": False})
+        ax.move_to([-2.9, 0.1, 0.0])
+        self.play(FadeOut(working), FadeIn(head), FadeIn(ax), run_time=0.7)
+        self.say("s15.b2")
+        path = ax.plot(lambda t: t, x_range=[0.35, 2.02], color=VIOLET, stroke_width=4)
+        self.play(Create(path), run_time=0.9)
+        self.say("s15.b3")
+        top = DashedLine(ax.c2p(0, 2), ax.c2p(12, 2), color=CORAL, stroke_width=2.6,
+                         dash_length=0.14)
+        toplab = MathTex(r"f=2", font_size=FS_LABEL, color=CORAL)
+        toplab.next_to(top, UP, buff=0.10)
+        self.play(Create(top), FadeIn(toplab), run_time=0.7)
+        self.say("s15.b4")
+        sweep = ValueTracker(10.2)
+        mark = always_redraw(lambda: Dot(ax.c2p(sweep.get_value(),
+                                                 sweep.get_value()),
+                                         color=VIOLET, radius=0.09))
+        read = always_redraw(
+            lambda: DecimalNumber(F2(sweep.get_value(), sweep.get_value()),
+                                  num_decimal_places=4, color=INK, font_size=44))
+        read.next_to(ax, RIGHT, buff=0.35).align_to(ax, UP)
+        self.add(mark, read)
+        self.play(sweep.animate.set_value(0.55), run_time=5.0, rate_func=rate_functions.ease_in_out_sine)
+        self.say("s15.b5")
+        self.remove(mark, read)
+        warn = VGroup(
+            Text("x, a → 0⁺", font_size=FS_LABEL, color=VIOLET),
+            Text("the sum approaches 2 from below", font_size=FS_MICRO, color=MUTED),
+            Text("and would cross it if we were careless", font_size=FS_MICRO, color=CORAL),
+            Text("⇒ the proof must be sharp exactly here", font_size=FS_LABEL, color=AMBER),
+        ).arrange(DOWN, buff=0.20, aligned_edge=LEFT)
+        warn.move_to([2.6, -0.85, 0.0])
+        self.play(FadeIn(warn), run_time=0.7)
+        self.say("s15.b6")
+        self.finish(frame_15(), head, ax, path, top, toplab, warn)
+
+    def scene_16(self) -> None:
+        prev = frame_15()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s16.b1")
+        head = title_bar("05  UPPER BOUND", "Case 1 · A + B ≥ 6")
+        bars = VGroup()
+        parts = []
+        for i, (nm, val, txt, col) in enumerate((
+            ("A", 2.0, r"A\le2", TEAL),
+            ("B", 4.0, r"B\ge6-A\ge4", BLUE),
+            ("C", 4.0, r"C\ge B\ge4", BLUE),
+        )):
+            y = 1.85 - 1.15 * i
+            base = Line([-6.3, y, 0], [-1.1, y, 0], color=GRID, stroke_width=2)
+            full = Rectangle(width=5.2, height=0.30, stroke_width=0, fill_color=GRID,
+                             fill_opacity=0.35).move_to([-3.7, y, 0])
+            bar = Rectangle(width=5.2 * val / 6.0, height=0.30, stroke_width=0,
+                            fill_color=col, fill_opacity=0.9).move_to(
+                [-6.3 + 5.2 * val / 12.0, y, 0])
+            lab = MathTex(nm, font_size=FS_LABEL, color=MUTED).move_to([-6.75, y, 0])
+            val_ = MathTex(txt, font_size=FS_LABEL, color=col).move_to([-0.55, y, 0])
+            row = VGroup(base, full, bar, lab, val_)
+            bars.add(row)
+            parts.append(row)
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s16.b2")
+        self.play(FadeIn(parts[0]), run_time=0.6)
+        self.say("s16.b3")
+        self.play(FadeIn(parts[1]), FadeIn(parts[2]), run_time=0.6)
+        self.say("s16.b4")
+        chain = VGroup(
+            MathTex(r"f=\phi(A)+\phi(B)+\phi(C)", font_size=36, color=INK),
+            MathTex(r"<\ 1+\tfrac{1}{\sqrt5}+\tfrac{1}{\sqrt5}", font_size=36, color=AMBER),
+            MathTex(r"=1+\tfrac{2}{\sqrt5}=1.8944\ldots<2", font_size=36, color=TEAL),
+        ).arrange(DOWN, buff=0.24)
+        chain.move_to([3.6, 0.55, 0.0])
+        self.play(Write(chain), run_time=1.6)
+        self.say("s16.b5")
+        why = Text("2/√5 < 1 because 4 < 5", font_size=FS_MICRO, color=MUTED)
+        why.next_to(chain, DOWN, buff=0.26)
+        self.play(FadeIn(why), run_time=0.5)
+        self.finish(frame_16(), head, bars, chain, why)
+
+    def scene_17(self) -> None:
+        prev = frame_16()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s17.b1")
+        head = title_bar("05  UPPER BOUND", "Case 2 · A + B < 6")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s17.b2")
+        known = VGroup(
+            MathTex(r"\phi(C)=\sqrt{\tfrac{p}{p+8}}\ \ \text{exactly}", font_size=34,
+                    color=TEAL),
+            MathTex(r"\phi(A)+\phi(B)\le\sqrt{\tfrac{2(2+s)}{1+s+p}}"
+                    r"\ \ \text{(Cauchy)}", font_size=34, color=BLUE),
+        ).arrange(DOWN, buff=0.30)
+        known.move_to([-3.3, 0.85, 0.0])
+        self.play(Write(known), run_time=1.8)
+        self.say("s17.b3")
+        self.say("s17.b4")
+        cap = MathTex(r"p=AB<A(6-A)", font_size=34, color=AMBER)
+        cap.next_to(known, DOWN, buff=0.34)
+        self.play(Write(cap), run_time=1.0)
+        self.say("s17.b5")
+        ax = Axes(x_range=[0, 2.2, 0.5], y_range=[0, 9, 2], x_length=3.4, y_length=2.6,
+                  axis_config={"stroke_color": GRID, "stroke_width": 1.8,
+                               "include_tip": False})
+        ax.move_to([3.4, -1.35, 0.0])
+        par = ax.plot(lambda t: t * (6 - t), x_range=[0, 2], color=AMBER, stroke_width=4)
+        pardot = Dot(ax.c2p(2, 8), color=CORAL, radius=0.08)
+        parl = Text("peak 8 at A = 2", font_size=FS_MICRO, color=CORAL)
+        parl.next_to(pardot, RIGHT, buff=0.10)
+        self.play(FadeIn(ax), Create(par), run_time=1.3)
+        self.play(FadeIn(pardot), FadeIn(parl), run_time=0.5)
+        self.say("s17.b6")
+        master = card(MathTex(
+            r"f<\sqrt{\tfrac{2(2+s)}{1+s+p}}+\sqrt{\tfrac{p}{p+8}}",
+            font_size=40, color=INK), 7.0, AMBER)
+        master.move_to([3.5, 1.35, 0.0])
+        self.play(FadeIn(master), run_time=0.8)
+        self.finish(frame_17(), head, known, cap, master, ax, par, pardot, parl)
+
+    def scene_18(self) -> None:
+        prev = frame_17()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s18.b1")
+        head = title_bar("05  UPPER BOUND", "The sharp sub-case, and one lemma")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s18.b2")
+        mono = MathTex(r"\tfrac{d}{ds}\!\left[\tfrac{2+s}{1+s+p}\right]"
+                       r"=\tfrac{p-1}{(1+s+p)^2}\le0\quad(p\le1)",
+                       font_size=34, color=BLUE)
+        mono.move_to([0.0, 1.65, 0.0])
+        self.play(Write(mono), run_time=1.6)
+        self.say("s18.b3")
+        atmin = MathTex(r"\Rightarrow\ \phi(A)+\phi(B)\le"
+                        r"\sqrt{\tfrac{2(2+2\sqrt p)}{(1+\sqrt p)^2}}"
+                        r"=\tfrac{2}{\sqrt{1+\sqrt p}}", font_size=34, color=INK)
+        atmin.next_to(mono, DOWN, buff=0.26)
+        self.play(Write(atmin), run_time=1.8)
+        self.say("s18.b4")
+        lemma = card(VGroup(
+            MathTex(r"\textbf{LEMMA}\quad"
+                    r"\frac{2}{\sqrt{1+q}}+\frac{q}{\sqrt{q^2+8}}<2"
+                    r"\quad\text{for every }q>0", font_size=40, color=INK)), 12.2, VIOLET)
+        lemma.next_to(atmin, DOWN, buff=0.30)
+        self.play(FadeIn(lemma), run_time=0.9)
+        self.say("s18.b5")
+        proof = VGroup(
+            MathTex(r"2-\tfrac{2}{\sqrt{1+q}}=\tfrac{2q}{1+q+\sqrt{1+q}}"
+                    r"\quad\text{(rationalise)}", font_size=30, color=INK),
+            MathTex(r"1+q+\sqrt{1+q}\le2+\tfrac32q"
+                    r"\quad\text{since }\sqrt{1+q}\le1+\tfrac q2", font_size=30, color=INK),
+            MathTex(r"4(q^2+8)-(2+\tfrac32q)^2=\tfrac74q^2-6q+28>0"
+                    r"\quad(\Delta=-160<0)", font_size=30, color=TEAL),
+        ).arrange(DOWN, buff=0.18, aligned_edge=LEFT)
+        proof.next_to(lemma, DOWN, buff=0.26)
+        self.play(LaggedStart(*[Write(p) for p in proof], lag_ratio=0.4), run_time=2.4)
+        self.say("s18.b6")
+        self.finish(frame_18(), head, mono, atmin, lemma, proof)
+
+    def scene_19(self) -> None:
+        prev = frame_18()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s19.b1")
+        head = title_bar("05  UPPER BOUND", "The rest of Case 2, where slack is available")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s19.b2")
+        plug = MathTex(r"s<6\ \Rightarrow\ "
+                       r"\sqrt{\tfrac{2(2+s)}{1+s+p}}<\sqrt{\tfrac{16}{7+p}}",
+                       font_size=36, color=BLUE)
+        plug.move_to([0.0, 1.65, 0.0])
+        self.play(Write(plug), run_time=1.4)
+        self.say("s19.b3")
+        self.say("s19.b4")
+        header = VGroup(*[
+            Text(t, font_size=FS_MICRO, color=MUTED, weight=BOLD)
+            for t in ("sub-range", "first two terms", "third term", "total")
+        ]).arrange(RIGHT, buff=0.55, aligned_edge=UP)
+        specs = (
+            (r"p\le1", r"\tfrac{2}{\sqrt{1+\sqrt p}}", r"\sqrt{\tfrac{p}{p+8}}",
+             r"<2\ \text{(Lemma)}", TEAL),
+            (r"1<p\le3", r"\sqrt2", r"\sqrt{\tfrac3{11}}", r"1.9364<2", AMBER),
+            (r"3<p<8", r"\tfrac4{\sqrt{10}}", r"\tfrac1{\sqrt2}", r"1.9720<2", AMBER),
         )
-        self.pause(7.0)
+        body = VGroup()
+        for a, b, c, d, col in specs:
+            body.add(VGroup(
+                MathTex(a, font_size=FS_MICRO, color=INK),
+                MathTex(b, font_size=FS_MICRO, color=BLUE),
+                MathTex(c, font_size=FS_MICRO, color=VIOLET),
+                MathTex(d, font_size=FS_MICRO, color=col),
+            ).arrange(RIGHT, buff=0.55, aligned_edge=UP))
+        body.arrange(DOWN, buff=0.30, aligned_edge=UP)
+        table = VGroup(header, body).arrange(DOWN, buff=0.28, aligned_edge=UP)
+        table.next_to(plug, DOWN, buff=0.34)
+        self.play(FadeIn(table), run_time=1.0)
+        self.say("s19.b5")
+        exact = VGroup(
+            Text("the last two rows are exact, not numerical:", font_size=FS_MICRO,
+                 color=MUTED),
+            MathTex(r"63>44\sqrt2\ (3969>3872)", font_size=FS_MICRO, color=AMBER),
+            MathTex(r"2.9>2\sqrt2\ (8.41>8)", font_size=FS_MICRO, color=AMBER),
+        ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
+        exact.next_to(table, DOWN, buff=0.30).align_to(table, LEFT)
+        self.play(FadeIn(exact), run_time=0.7)
+        self.say("s19.b6")
+        whole = VGroup(plug, table, exact).move_to([0.0, 0.35, 0.0])
+        self.finish(frame_19(), head, whole)
 
-        caption = self.carded(self.note("one base point, one circle"), down * 3.0)
-        self.play(FadeIn(caption), run_time=1.5)
-        self.pause(7.0)
+    def scene_20(self) -> None:
+        prev = frame_19()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s20.b1")
+        head = title_bar("05  UPPER BOUND", "Upper bound closed")
+        verdict = verdict_tex(r"f(x,a)", 88)
+        verdict.move_to([0.0, 0.75, 0.0])
+        self.play(FadeOut(working), FadeIn(head), Write(verdict), run_time=1.4)
+        self.say("s20.b2")
+        sub = MathTex(r"A=x,\quad B=a,\quad C=\tfrac{8}{AB},\quad ABC=8",
+                      font_size=34, color=MUTED)
+        sub.next_to(verdict, DOWN, buff=0.50)
+        self.play(FadeIn(sub), run_time=0.7)
+        self.say("s20.b3")
+        beat = Text("both bounds closed. now let us look at it.", font_size=FS_LABEL,
+                    color=VIOLET)
+        beat.next_to(sub, DOWN, buff=0.28)
+        self.play(FadeIn(beat), run_time=0.6)
+        self.finish(frame_20(), head, verdict, sub, beat)
 
-        punchline = self.carded(
-            self.note("the fiber is the shadow of a great circle on S^3"),
-            down * 2.3,
-        )
-        self.play(FadeIn(punchline), run_time=1.0)
-        self.pause(6.0)
+    def _panel(self, builder, *beats: str) -> None:
+        panel = builder()
+        self.play(FadeIn(panel), run_time=0.9)
+        for key in beats:
+            self.say(key)
 
-        self.play(FadeOut(VGroup(hopf, fiber_formula)), run_time=0.5)
-        self.pause(6.0)
+    def scene_21(self) -> None:
+        prev = frame_20()
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s21.b1")
+        panel = panel_contour()
+        self.play(FadeOut(working), FadeIn(panel), run_time=1.0)
+        self.say("s21.b2")
+        self.say("s21.b3")
+        self.say("s21.b4")
+        bar = [m for m in panel if isinstance(m, ImageMobject)][-1]
+        self.say("s21.b5")
+        self.play(Circumscribe(bar, color=AMBER, run_time=1.0), run_time=1.0)
+        self.say("s21.b6")
+        self.play(Indicate(bar, color=CORAL, scale_factor=1.10), run_time=1.2)
+        self.say("s21.b7")
+        self.finish(frame_of("S21"), panel)
 
-        self.play(
-            FadeOut(VGroup(base_sphere, base_follower, upper_fiber)), run_time=0.5
-        )
-        self.pause(3.0)
+    def scene_22(self) -> None:
+        prev = frame_of("S21")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s22.b1")
+        panel = panel_slice()
+        self.play(FadeOut(working), FadeIn(panel), run_time=1.0)
+        self.say("s22.b2")
+        sweep = ValueTracker(0.4)
+        target = [m for m in panel if isinstance(m, Axes)][0]
+        mark = always_redraw(
+            lambda: Dot(target.c2p(sweep.get_value(), 0), color=AMBER, radius=0.08))
+        read = always_redraw(
+            lambda: DecimalNumber(F2(sweep.get_value(), 2.0), num_decimal_places=4,
+                                  color=AMBER, font_size=36))
+        read.move_to([5.35, 1.9, 0.0])
+        self.add(mark, read)
+        self.say("s22.b3")
+        self.play(sweep.animate.set_value(28.0), run_time=5.0,
+                  rate_func=rate_functions.ease_in_out_sine)
+        self.remove(mark, read)
+        self.say("s22.b4")
+        self.say("s22.b5")
+        self.say("s22.b6")
+        self.finish(frame_of("S22"), panel)
 
-    # ------------------------------------------------------------------
-    # S6 -- linked
-    # ------------------------------------------------------------------
-    def scene_6(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
-        left = __import__("manim").LEFT
+    def scene_23(self) -> None:
+        prev = frame_of("S22")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s23.b1")
+        panel = panel_logspace()
+        self.play(FadeOut(working), FadeIn(panel), run_time=1.0)
+        self.say("s23.b2")
+        self.say("s23.b3")
+        self.say("s23.b4")
+        self.say("s23.b5")
+        self.say("s23.b6")
+        self.finish(frame_of("S23"), panel)
 
-        self.fade_all(1.0)
-        self.pause(4.0)
+    def scene_24(self) -> None:
+        prev = frame_of("S23")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s24.b1")
+        panel = panel_cases()
+        self.play(FadeOut(working), FadeIn(panel), run_time=1.0)
+        self.say("s24.b2")
+        self.say("s24.b3")
+        dashed = [m for m in panel if isinstance(m, DashedLine)]
+        if dashed:
+            self.play(Circumscribe(dashed[0], color=INK, run_time=1.0), run_time=1.0)
+        self.say("s24.b4")
+        self.say("s24.b5")
+        self.say("s24.b6")
+        self.finish(frame_of("S24"), panel)
 
-        header = self.carded(self.header("5 · LINKED"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(5.0)
+    def scene_25(self) -> None:
+        prev = frame_of("S24")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s25.b1")
+        panel = panel_stats()
+        self.play(FadeOut(working), FadeIn(panel), run_time=1.0)
+        self.say("s25.b2")
+        self.say("s25.b3")
+        self.say("s25.b4")
+        self.say("s25.b5")
+        rects = [m for m in panel if isinstance(m, Rectangle) and m.height > 0.3]
+        if rects:
+            self.play(LaggedStart(*[Indicate(r, color=TEAL, scale_factor=1.06)
+                                   for r in rects[:8]], lag_ratio=0.08), run_time=1.4)
+        self.say("s25.b6")
+        self.say("s25.b7")
+        self.finish(frame_of("S25"), panel)
 
-        fiber_a = make_fiber(0.9, 0.0, CORAL)
-        fiber_b = make_fiber(0.9, 2.1, SKY)
-        self.play(Create(fiber_a), run_time=1.5)
-        self.pause(7.0)
+    def scene_26(self) -> None:
+        prev = frame_of("S25")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s26.b1")
+        head = title_bar("05  PICTURES", "Panel 6 · both constants are optimal")
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        left = VGroup(
+            Text("x, a → +∞", font_size=FS_LABEL, color=MUTED),
+            MathTex(r"\phi(x)\to0,\quad \phi(a)\to0,\quad"
+                    r"\sqrt{\tfrac{ax}{ax+8}}\to1", font_size=30, color=INK),
+            MathTex(r"f\to1\ \text{from above}", font_size=40, color=TEAL),
+        ).arrange(DOWN, buff=0.26)
+        right = VGroup(
+            Text("x, a → 0⁺", font_size=FS_LABEL, color=MUTED),
+            MathTex(r"\phi(x)\to1,\quad \phi(a)\to1,\quad"
+                    r"\sqrt{\tfrac{ax}{ax+8}}\to0", font_size=30, color=INK),
+            MathTex(r"f\to2\ \text{from below}", font_size=40, color=CORAL),
+        ).arrange(DOWN, buff=0.26)
+        pair = VGroup(left, right).arrange(RIGHT, buff=1.1)
+        pair.move_to([0.0, 0.55, 0.0])
+        self.play(FadeIn(left), run_time=0.9)
+        self.say("s26.b2")
+        self.say("s26.b3")
+        self.play(FadeIn(right), run_time=0.9)
+        self.say("s26.b4")
+        verdict = MathTex(r"\inf f=1\qquad\sup f=2\qquad\text{neither attained}",
+                          font_size=44, color=INK)
+        verdict.next_to(pair, DOWN, buff=0.50)
+        self.play(Write(verdict), run_time=1.3)
+        self.say("s26.b5")
+        forced = VGroup(
+            Text("so 1.0001 would be false, 1.9999 would be false,", font_size=FS_LABEL,
+                 color=MUTED),
+            Text("and the statement must use strict inequalities", font_size=FS_LABEL,
+                 color=AMBER),
+        ).arrange(DOWN, buff=0.16)
+        forced.next_to(verdict, DOWN, buff=0.30)
+        self.play(FadeIn(forced), run_time=0.7)
+        self.say("s26.b6")
+        self.finish(frame_of("S26"), head, pair, verdict, forced)
 
-        self.play(Create(fiber_b), run_time=1.5)
-        self.pause(8.0)
-
-        self.play(fiber_a.animate.rotate(PI * 0.9, axis=up), run_time=1.5)
-        self.pause(8.0)
-
-        tag_a = self.carded(self.note("fiber A"), up * 2.2 + left * 3.0)
-        tag_b = self.carded(self.note("fiber B"), up * 1.6 + left * 3.0)
-        tag_a[1].set_color(CORAL)
-        tag_b[1].set_color(SKY)
-        self.play(FadeIn(tag_a), FadeIn(tag_b), run_time=1.0)
-        self.pause(9.0)
-
-        verdict = self.carded(
-            self.note("linked: they cannot be pulled apart"), down * 3.0
-        )
-        self.play(FadeIn(verdict), run_time=1.0)
-        self.pause(9.0)
-
-        fiber_c = make_fiber(0.6, 0.8, MINT)
-        fiber_d = make_fiber(0.6, 3.9, GOLD)
-        self.play(Create(fiber_c), Create(fiber_d), run_time=1.5)
-        self.pause(9.0)
-
-        self.play(fiber_c.animate.rotate(PI * 0.8, axis=up), run_time=1.0)
-        self.pause(9.0)
-
-        self.move_camera(phi=40 * DEGREES, theta=-80 * DEGREES, run_time=1.5)
-        self.pause(9.0)
-
-        universal = self.carded(
-            self.note("any two fibers: linking number one"), down * 3.0
-        )
-        self.play(FadeIn(universal), run_time=1.0)
-        self.pause(8.0)
-
-        in_four_d = self.carded(
-            self.note("the crossing only exists in four dimensions"), down * 2.3
-        )
-        self.play(FadeIn(in_four_d), run_time=1.0)
-        self.pause(7.0)
-
-        self.play(Indicate(VGroup(fiber_a, fiber_b), color=WHITE), run_time=1.0)
-        self.pause(6.0)
-
-        self.play(
-            FadeOut(VGroup(tag_a, tag_b, verdict, fiber_c, fiber_d)), run_time=0.5
-        )
-        self.pause(6.0)
-
-        self.play(
-            FadeOut(VGroup(fiber_a, fiber_b, universal, in_four_d)), run_time=1.0
-        )
-        self.pause(5.5)
-
-        self.fade_all(0.5)
-        self.pause(8.0)
-
-    def build_structure(self) -> VGroup:
-        """The line plus four nested Clifford tori, each woven with fibers."""
-        z_line = Line3D(
-            np.array([0.0, 0.0, -2.5]),
-            np.array([0.0, 0.0, 2.5]),
-            color=GOLD,
-            thickness=0.02,
-        )
-        latitudes = [0.45, 0.85, 1.2, 1.5]
-        colors = [SKY, MINT, CORAL, LILAC]
-        bundles = [
-            torus_bundle(theta, color) for theta, color in zip(latitudes, colors)
-        ]
-        shells = VGroup(*[shell for shell, _ in bundles])
-        fibers = VGroup(*[group for _, group in bundles])
-        return VGroup(z_line, shells, fibers)
-
-    # ------------------------------------------------------------------
-    # S7 -- the line and the Clifford tori
-    # ------------------------------------------------------------------
-    def scene_7(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
-
-        self.fade_all(1.0)
-        self.pause(4.0)
-
-        header = self.carded(self.header("6 · ONE LINE, THREE TORI"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(5.0)
-
-        z_line = Line3D(
-            np.array([0.0, 0.0, -2.5]),
-            np.array([0.0, 0.0, 2.5]),
-            color=GOLD,
-            thickness=0.02,
-        )
-        self.set_camera_orientation(
-            phi=65 * DEGREES, theta=-52 * DEGREES, zoom=1.15
-        )
-        self.play(Create(z_line), run_time=2.0)
-        self.pause(8.0)
-
-        latitudes = [0.45, 0.85, 1.2, 1.5]
-        colors = [SKY, MINT, CORAL, LILAC]
-        bundles = [
-            torus_bundle(theta, color) for theta, color in zip(latitudes, colors)
-        ]
-        shells = VGroup(*[shell for shell, _ in bundles])
-        self.play(*[Create(shell) for shell in shells], run_time=5.0)
-        self.pause(9.0)
-
-        all_fibers = VGroup(*[fibers for _, fibers in bundles])
-        self.play(*[Create(fibers) for fibers in all_fibers], run_time=5.0)
-        self.pause(10.0)
-
-        line_note = self.carded(
-            self.note("the north-pole fiber: a circle of infinite radius"),
-            down * 3.0,
-        )
-        self.play(FadeIn(line_note), run_time=1.0)
-        self.pause(10.0)
-
-        villarceau = self.carded(
-            self.note("Villarceau circles: each torus is woven from fibers"),
-            down * 2.3,
-        )
-        self.play(FadeIn(villarceau), run_time=1.0)
-        self.pause(9.0)
-
-        hero = bundles[-1][1][0]
-        self.play(Indicate(hero, color=WHITE, scale_factor=1.15), run_time=1.0)
-        self.pause(9.0)
-
-        codebook = self.carded(
-            self.note("every circle here belongs to a base point"), down * 3.0
-        )
-        self.play(FadeIn(codebook), run_time=1.0)
-        self.pause(8.0)
-
-        self.play(Indicate(shells[0], color=SKY), run_time=1.0)
-        self.pause(7.0)
-
-        self.play(Indicate(VGroup(z_line), color=GOLD, scale_factor=1.05), run_time=1.0)
-        self.pause(6.0)
-
-        self.play(FadeOut(VGroup(line_note, villarceau, codebook)), run_time=0.5)
-        self.pause(5.0)
-
-        self.play(FadeOut(header), run_time=0.5)
-        self.pause(5.5)
-
-        self._carried = VGroup(z_line, shells, all_fibers)
-
-    # ------------------------------------------------------------------
-    # S8 -- the whole structure, Clifford translation
-    # ------------------------------------------------------------------
-    def scene_8(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-
-        self.fade_all(1.0)
-        self.pause(4.0)
-
-        header = self.carded(self.header("7 · THE WHOLE STRUCTURE"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(6.0)
-
-        self.set_camera_orientation(
-            phi=65 * DEGREES, theta=-52 * DEGREES, zoom=1.15
-        )
-        self.begin_ambient_camera_rotation(rate=0.15, about="phi")
-        structure = self.build_structure()
-        self.play(FadeIn(structure), run_time=4.0)
-        self.pause(30.0)
-        self.stop_ambient_camera_rotation()
-
-        target_major, target_minor = torus_pair(0.9)
-        shells = VGroup(
-            *[
-                Torus(
-                    major_radius=target_major,
-                    minor_radius=target_minor,
-                    resolution=TORUS_RESOLUTION,
-                )
-                for _ in range(4)
-            ]
-        )
-        for index in range(len(shells)):
-            shells[index].set_fill(GOLD, opacity=0.18)
-            shells[index].set_stroke(GOLD, 2.0)
-            shells[index].set_shade_in_3d(True)
-
-        self.play(Transform(structure[1], shells), run_time=5.0)
-        self.pause(14.0)
-
-    # ------------------------------------------------------------------
-    # S9 -- why it matters
-    # ------------------------------------------------------------------
-    def scene_9(self) -> None:
-        self._pause_log.append([])
-        up = __import__("manim").UP
-        down = __import__("manim").DOWN
-        origin = __import__("manim").ORIGIN
-
-        self.fade_all(1.0)
-        self.pause(4.0)
-
-        header = self.carded(self.header("8 · WHY IT MATTERS"), up * 3.1)
-        self.play(FadeIn(header), run_time=1.0)
-        self.pause(5.0)
-
-        qubits = self.carded(
-            self.note("a qubit state is a point on S two -- its phase is a fiber"),
-            up * 2.2,
-        )
-        self.play(FadeIn(qubits), run_time=1.5)
-        self.pause(7.0)
-
-        rotations = self.carded(
-            self.note("rotations of space: S three with antipodes glued"),
-            down * 3.0,
-        )
-        self.play(FadeIn(rotations), run_time=1.5)
-        self.pause(7.0)
-
-        quaternions = self.carded(
-            self.note("and the quaternions hide the same four-sphere"),
-            down * 2.3,
-        )
-        self.play(FadeIn(quaternions), run_time=1.0)
-        self.pause(7.0)
-
-        history = self.carded(self.note("Heinz Hopf, 1931"), up * 3.1)
-        self.play(FadeIn(history), run_time=1.0)
-        self.pause(7.0)
-
-        closing_cluster = VGroup(
-            *[
-                make_fiber(0.35 + 0.25 * k, TAU * k / 6, color, samples=90)
-                for k, color in enumerate([CYAN, CORAL, SKY, MINT, GOLD, LILAC])
-            ]
-        )
-        self.play(FadeIn(closing_cluster), run_time=2.0)
-        self.pause(6.0)
-
-        closing_title = Text(
-            "THE HOPF FIBRATION", font_size=36, color=WHITE, font=FONT
-        )
-        self.play(FadeIn(closing_title.move_to(origin)), run_time=1.0)
-        self.pause(6.0)
-
-        final = self.carded(
-            self.note("every circle linked to every other"), down * 3.0
-        )
-        self.play(FadeIn(final), run_time=1.0)
-        self.pause(5.0)
-
-        self.fade_all(0.5)
-        self.pause(4.5)
+    def scene_27(self) -> None:
+        prev = frame_of("S26")
+        self.add(prev)
+        working = prev.copy()
+        self.remove(prev)
+        self.add(working)
+        self.say("s27.b1")
+        head = title_bar("05  CLOSE", "The whole proof on one screen")
+        col = VGroup(
+            MathTex(r"A=x,\ B=a,\ C=\tfrac{8}{AB}\ \Rightarrow\ ABC=8", font_size=32,
+                    color=AMBER),
+            MathTex(r"f=\phi(A)+\phi(B)+\phi(C)", font_size=32, color=INK),
+            MathTex(r"f>\tfrac1{1+A}+\tfrac1{1+B}+\tfrac1{1+C}\ge1\quad(A+B+C\ge6)",
+                    font_size=30, color=TEAL),
+            MathTex(r"A+B\ge6:\ f<1+\tfrac2{\sqrt5}<2", font_size=30, color=BLUE),
+            MathTex(r"A+B<6:\ p<8,\ \text{then }p\le1,\,1<p\le3,\,3<p<8",
+                    font_size=30, color=BLUE),
+        ).arrange(DOWN, buff=0.24, aligned_edge=LEFT)
+        col.move_to([-0.4, 0.75, 0.0])
+        self.play(FadeOut(working), FadeIn(head), run_time=0.7)
+        self.say("s27.b2")
+        self.play(FadeIn(col[0]), FadeIn(col[1]), run_time=0.8)
+        self.say("s27.b3")
+        self.play(FadeIn(col[2]), run_time=0.7)
+        self.say("s27.b4")
+        self.play(FadeIn(col[3]), FadeIn(col[4]), run_time=0.8)
+        verdict = verdict_tex("f", 64)
+        verdict.next_to(col, DOWN, buff=0.34).align_to(col, RIGHT)
+        self.play(Write(verdict), run_time=1.0)
+        self.say("s27.b5")
+        foot = Text("verification/verify_math.py — 24/24 checks pass", font_size=FS_MICRO,
+                    color=MUTED)
+        foot.next_to(col, DOWN, buff=0.60).align_to(col, LEFT)
+        self.play(FadeIn(foot), run_time=0.6)
+        self.finish(frame_27(), head, col, verdict, foot)
 
 
-VOICEOVER_SCRIPT = """
-THE HOPF FIBRATION -- VOICEOVER SCRIPT
-=====================================
-Runtime 14:09. Total narration pause time 697 s.
-Every [pause: X] below is exactly one self.pause(X) call in the matching
-scene method, in the same order. SCENE_BUDGET asserts that equality, so this
-transcript cannot drift out of sync with the render.
-The audio track itself lives in narration.txt; nothing here is burned into
-the picture as subtitles.
+# ---------------------------------------------------------------------------
+# voiceover script - generated from the transcript so it cannot go stale
+# ---------------------------------------------------------------------------
+def _clock(seconds: float) -> str:
+    whole = int(round(seconds))
+    return f"{whole // 60:d}:{whole % 60:02d}"
 
--- S1  0:00-0:50 --
-"Stop. Look at this picture." [pause: 3]
-"Six circles, floating in space. They never touch. And yet, every single one of them is linked to every other." [pause: 3]
-"That alone is strange." [pause: 2]
-"But here's what nobody tells you. This is not some exotic abstract construction. This is a shadow." [pause: 3]
-"In the next fifteen minutes, we're going to find out where these circles come from. A four-dimensional sphere. And why, once you see it, the whole picture becomes obvious." [pause: 10]
-"This is the Hopf fibration." [pause: 4]
-"Let's begin." [pause: 6]
 
--- S2  0:50-2:22 --
-"We're going to climb a ladder of spheres. Start simple. A circle." [pause: 3]
-"This is the one-dimensional sphere, S one. All the points at distance one from the origin. One number decides where you are." [pause: 3]
-"Add a dimension, and you get a sphere. The two-dimensional sphere, S two. The surface of a ball. Two numbers pin down any point." [pause: 7]
-"Now the key step. What is the three-dimensional sphere, S three? Most people guess. The surface of a four-dimensional ball." [pause: 6]
-"That's exactly right." [pause: 6]
-"But here's the trick. S three can be written in a shockingly compact way. As the set of pairs of complex numbers, z one and z two, whose squared lengths add up to one." [pause: 7]
-"And that single constraint pulls you down to a three-dimensional surface. A sphere, living in four dimensions." [pause: 7]
-"Already, something is stirring. If I get to choose z one, then z two is free to trace out a circle." [pause: 6]
-"S three is literally woven from circles." [pause: 7]
-"We're going to make that precise. But first, we need the bridge that takes four-dimensional shapes and shows them to us in three dimensions." [pause: 7]
-"It's called stereographic projection." [pause: 6]
-"Let's build it, one dimension at a time." [pause: 7]
--- S3  2:22-4:21 --
-"Stereographic projection squashes a sphere down to flat space. Let me show you with a circle. S one. Because everything carries over." [pause: 4]
-"Draw the circle. Put a point at its north pole. From that pole, draw a line through any other point of the circle, and extend it until it hits the ground. Every point on the circle maps to exactly one point on the line." [pause: 7]
-"One to one. With a single exception. The north pole itself. The line from the north pole through the north pole is ambiguous. It runs off sideways, forever." [pause: 7]
-"So the projection point becomes the point at infinity. Everything else lands on the line." [pause: 7]
-"Watch the point climb from the bottom of the circle toward the pole, and watch where its shadow lands. Slow at first, then runaway." [pause: 7]
-"Points near the south pole barely move their shadow. Points near the north pole shoot off to infinity. That is the whole game." [pause: 7]
-"Identical circles near the pole cast enormous shadows. Near the base, tiny ones. Distance is distorted. But a circle, as a shape, stays perfectly round." [pause: 8]
-"Now watch what happens one dimension up, in three dimensions." [pause: 9]
-"Here is a sphere. S two. With a plane beneath it." [pause: 7]
-"Trace a latitude circle on the sphere, and project every point of it the same way. From the north pole, through the point, down to the plane. The shadow is a perfect circle." [pause: 7]
-"This latitude, one hundred twenty degrees from the pole, casts a small shadow. Raise the latitude, closer to the pole. One hundred ten degrees. And the shadow grows." [pause: 7]
-"Take the equator itself, ninety degrees. The shadow swells, but stays a perfect circle." [pause: 7]
-"Any circle on the sphere, drawn away from the north pole, casts a perfectly circular shadow. Hold on to that." [pause: 6]
-"Because we are about to do the exact same thing. One dimension higher." [pause: 6]
--- S4  4:21-5:58 --
-"One dimension higher. Points of S three are four numbers, so to see them we project from a pole exactly as before. Only now the shadow lands in three-dimensional space." [pause: 5]
-"The pole is the point zero, zero, zero, one. Project from it, and every other point of S three lands somewhere in our familiar three-dimensional space." [pause: 6]
-"Here is the equator of S three. All points where the fourth coordinate is zero. It is a whole sphere in its own right." [pause: 7]
-"Watch a single point travel along this equator." [pause: 7]
-"And here is its shadow, in our space." [pause: 7]
-"As the point moves around the equator, its shadow traces the unit circle, flat in the x y plane. The entire equator of S three becomes, exactly, this one circle." [pause: 8]
-"Now tilt the great circle. Take a circle on S three that is not the equator." [pause: 7]
-"Its shadow is still a circle. But now it is tilted in space, lifted off the plane, floating." [pause: 8]
-"And that, at last, is where our opening picture comes from." [pause: 7]
-"Every circle we saw floating in space is the shadow of a circle on S three." [pause: 6]
-"But not every circle on S three is allowed. Only a very special family of them. The fibers." [pause: 6]
-"Time to meet the map that carves S three into fibers." [pause: 4]
-"The Hopf map." [pause: 4.5]
--- S5  5:58-7:47 --
-"Write S three as pairs of complex numbers, z one and z two, with squared lengths that add to one." [pause: 4]
-"The Hopf map sends such a pair to three real numbers. Twice the real part of z one times the conjugate of z two. Twice the imaginary part of that same product. And the difference of the squared lengths." [pause: 5]
-"A mouthful, I know. But watch what it does geometrically." [pause: 7]
-"Every point of S three lands on a point of the unit sphere, S two. You can check. Those three numbers always have combined length exactly one." [pause: 7]
-"So the Hopf map is a function from S three onto S two. Now the question. What happens to the points of S three that all get sent to the same point of S two?" [pause: 8]
-"Fix a point P of S two. The equation, h of z equals P, becomes two nice linear-looking equations in z one and z two. And their solutions form a circle on S three." [pause: 8]
-"A whole circle of inputs, collapsing to a single output. Each of these circles gets a name. A fiber." [pause: 8]
-"Here is one. On the little sphere in the corner I keep a base point. The target on S two. And here is the red fiber over it, drawn in space as its stereographic shadow." [pause: 7]
-"It is a perfect circle." [pause: 7]
-"Slide the base point around the equator, and the fiber rotates with it. One full turn for one full circuit." [pause: 7]
-"Move the base point to a different latitude, and the circle floats higher, or grows larger." [pause: 7]
-"Every point of S two has exactly one fiber over it. And every point of S three lies on exactly one fiber." [pause: 7]
-"So the whole of S three, four-dimensional and invisible, umbrellas out into a three-dimensional space completely filled with circles." [pause: 6]
-"Now, what happens when you pick two of them?" [pause: 6]
--- S6  7:47-10:01 --
-"Take two fibers. Two circles in space, belonging to two different base points." [pause: 4]
-"Here they are. Red and blue. Sitting apart." [pause: 5]
-"Now the moment you have been waiting for. Rotate one through the other. Remember. The base point on S two moves continuously, so the fiber moves continuously through all of space between." [pause: 7]
-"And look." [pause: 8]
-"They are linked." [pause: 8]
-"Like two links of a chain. There is no way to pull them apart without cutting one of them." [pause: 9]
-"And this is not a special pair. Any two fibers. Any two at all. Are linked exactly once." [pause: 9]
-"Let's prove it by feel. Slide the base points along different paths on the sphere. The circles slide through each other. And every time, they come out linked." [pause: 9]
-"The linking number of any two fibers is exactly one." [pause: 9]
-"Now here is the mind-bending part. The two fibers had to pass through each other, in space, to become linked." [pause: 9]
-"But on S three they never touch. The crossing happens entirely in the fourth dimension, hidden from us. What we see is the shadow of a smooth, impossible-looking tangling." [pause: 9]
-"A family of circles, one for each point of a sphere, every pair of them linked." [pause: 8]
-"This is the Hopf fibration." [pause: 7]
-"And we have not even seen the whole structure yet." [pause: 6]
-"Because the fibers do not just exist in isolation. They organize into tori." [pause: 6]
-"And one more beautiful fact. Fix any torus. It splits into two families of fibers. Red and blue. Every red circle links every blue circle exactly once. Circles of the same color sit side by side, never touching. Slide the red family around the blue direction, and each red circle flows into its neighbor. Until, after one full sweep, the entire torus is exactly where it started. That is the Clifford translation. A rotation of the four-dimensional sphere, seen as a perfect sliding of circles in space." [pause: 5.5]
--- S7  10:01-11:56 --
-"Now the whole structure at once. One line down the middle, and a stack of nested tori, every surface made of linked circles." [pause: 4]
-"Watch from far away. Let your eye follow the circles as they wrap around, and around." [pause: 5]
-"And now let them slide. The red family flows one way, the blue family flows the other. No circle ever crosses another circle of its own color. The torus is not spinning. It is being woven." [pause: 8]
-"Tilt the latitude of the base points, and the whole weaving shifts. The same circles. The same space. Now flowing the other way. An entire four-dimensional rotation, visible in three. That is the Hopf fibration in full." [pause: 9]
-"Now look closer. The line down the middle is not a special case. It is the fiber over the north pole. A circle of infinite radius." [pause: 10]
-"Everything else is a stack of Clifford tori. Theta equals point four five. A thin pencil of a donut. Theta equals point eight five, fatter and wider. Theta equals one point two, and one point five, wide sweeping tori that almost reach the bounding sphere." [pause: 10]
-"Every one of those surfaces is woven from eight fibers, and those circles have a name. Villarceau circles." [pause: 9]
-"A classic puzzle that dissolves the moment you know they are Hopf fibers." [pause: 9]
-"Pick any circle in this space. It is a fiber. Look up its base point on the sphere, and you have located it exactly. The sphere is a code book for all of space." [pause: 8]
-"And a line is just a circle of infinite radius." [pause: 7]
-"Hopf found all of this in nineteen thirty-one." [pause: 6]
-"And it never stopped mattering." [pause: 5]
-"This is the structure. This is the whole map, drawn in space." [pause: 5.5]
--- S8  11:56-13:00 --
-"Why does any of this matter?" [pause: 4]
-"Because the Hopf fibration is not a curiosity. It is the skeleton of modern physics and geometry." [pause: 6]
-"Every quantum state of a single qubit is a point on S two. The same sphere whose fibers filled our space. Quantum phases are the circles flowing around those points. The state of a two-qubit system is four complex numbers, and its phases are two linked circles. Entanglement is not a mystery. It is literally this picture. And rotations of three-dimensional space form the group S O three. Topologically, that group is precisely this sphere with antipodal points identified. The same four-dimensional sphere, cut into the same circles. Even the quaternions, that strange algebra of rotations, are hiding the same structure. One discovery, made by Heinz Hopf in nineteen thirty-one, still tying together the smallest computations and the grandest geometry in the universe." [pause: 30]
-"So the next time you see a donut, or a swirl of linked circles, remember the hidden sphere. Four dimensions, folded down into three. Every circle linked to every other. The shadow of a four-dimensional sphere. This is the Hopf fibration." [pause: 14]
--- S9  13:00-14:09 --
-"Six circles, to begin with. One for each of six directions on a sphere." [pause: 4]
-"We began with a circle, and climbed to a sphere, and then to a sphere of spheres." [pause: 5]
-"We learned to see four dimensions in three, by cutting out one point and letting it go to infinity." [pause: 7]
-"We found a map from the four-sphere onto the two-sphere, and saw that every point of the two-sphere owns exactly one circle." [pause: 7]
-"We proved that any two of those circles are linked. Once. No exceptions." [pause: 7]
-"We stacked the latitudes into Clifford tori, and watched the whole thing weave itself without ever crossing." [pause: 7]
-"And we found the same object hiding in qubits, in rotations, in quaternions." [pause: 6]
-"Four numbers. One constraint. A whole universe of circles." [pause: 6]
-"The Hopf fibration. Every circle linked to every other." [pause: 5]
-"Thank you for watching." [pause: 4.5]
-"""
+def build_voiceover_script() -> str:
+    lines = [
+        "THE 2008 JIANGXI GAOKAO PROBLEM -- VOICEOVER SCRIPT",
+        "=" * 78,
+        "",
+        "Generated from the BEATS table in scene.py, which is the same table the",
+        "renderer holds on to and that verify_budget asserts against. Do not",
+        "hand-edit: change the transcript in scene.py and re-run this.",
+        "",
+        f"Sections          : {SECTION_COUNT}",
+        f"Total narration   : {_clock(TOTAL_NARRATION)} ({TOTAL_NARRATION:.1f}s)",
+        f"Caption companion : scene_no_vo.py (GAOKAO_CAPTIONS=1)",
+        "",
+    ]
+    at = 0.0
+    for name in sorted(NARRATION, key=lambda s: int(s[1:])):
+        beats = NARRATION[name]
+        held = sum(d for _, _, d in beats)
+        lines.append("-- " + name + " " + "-" * max(0, 68 - len(name)))
+        for _, text, dur in beats:
+            lines.append(f"  [{_clock(at)} -> {_clock(at + dur)}]  {text}")
+            at += dur
+        lines.append(f"  (section narration {_clock(held)}, running total {_clock(at)})")
+        lines.append("")
+    lines.append("=" * 78)
+    lines.append(f"END - {_clock(at)} of narration across {SECTION_COUNT} sections")
+    return "\n".join(lines)
+
+
+VOICEOVER_SCRIPT = build_voiceover_script()
+
+
+if __name__ == "__main__":
+    print(VOICEOVER_SCRIPT)
+
+
