@@ -26,8 +26,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install manim
-        run: pip install "manim==$MANIM_VERSION"
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -c "import manim, numpy; print('manim', manim.__version__, '/ numpy', numpy.__version__)"
 
       - name: Byte-compile every module
         run: python -m py_compile scene.py scene_no_vo.py build_narration.py check_scenes.py
@@ -74,8 +77,11 @@ jobs:
             texlive-latex-extra \
             texlive-science
 
-      - name: Install manim
-        run: pip install "manim==$MANIM_VERSION"
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -c "import manim, numpy; print('manim', manim.__version__, '/ numpy', numpy.__version__)"
 
       - name: Render section S${{ matrix.i }} at 2560x1440 60fps
         env:
