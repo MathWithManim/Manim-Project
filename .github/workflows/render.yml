@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Do NOT cancel in progress. A full 2K60 render is tens of runner-hours; a
+  # later commit must not destroy one that is already most of the way through.
+  # Superseded runs still cost minutes, which is the cheaper mistake here.
   group: render-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   SECTION_COUNT: "27"
@@ -209,76 +212,34 @@ jobs:
           N=$(ls -1 ordered 2>/dev/null | wc -l)
           echo "segments present: $N"
 
-          BAD=0
+          # Remux every segment to MPEG-TS carrying its SPS/PPS inline, then
+          # byte-concatenate. The MP4 concat demuxer is strict about per-file
+          # parameter sets and timestamps coming from 27 independent renders;
+          # annexb TS is built to be concatenated and sidesteps that entirely.
+          OK=0
           for f in ordered/*.mp4; do
-            SZ=$(stat -c%s "$f")
-            if [ ! -s "$f" ] || [ "$SZ" -lt 100000 ]; then
-              echo "::error title=bad segment::$(basename "$f") is $SZ bytes"
-              BAD=$((BAD + 1))
+            base=$(basename "$f" .mp4)
+            if ffmpeg -y -hide_banner -loglevel error -i "$f" -c copy \
+                 -bsf:v h264_mp4toannexb -f mpegts \
+                 -muxdelay 0 -muxpreload 0 -muxrate 0 "ordered/$base.ts"; then
+              OK=$((OK + 1))
+            else
+              echo "::error title=remux failed::$f could not be converted to mpegts"
             fi
           done
-          if [ "$BAD" -gt 0 ]; then
-            echo "::error title=join aborted::$BAD segment(s) are empty or truncated"
-            exit 0
-          fi
+          echo "remuxed $OK/$N segments to mpegts"
+          [ "$OK" -gt 0 ] || { echo "::error title=join aborted::no segment could be remuxed"; exit 0; }
 
-          P=$(ffprobe -v error -select_streams v -show_entries \
-              stream=codec_name,width,height,r_frame_rate,time_base \
-              -of default=noprint_wrappers=1 ordered/01.mp4 | tr '\n' ' ')
-          echo "first segment: $P"
+          cat $(ls -1 ordered/*.ts | sort) > joined.ts
+          echo "joined.ts = $(stat -c%s joined.ts) bytes"
 
-          : > list.txt
-          for f in ordered/*.mp4; do echo "file '$(pwd)/$f'" >> list.txt; done
-          head -n 2 list.txt
-
-          echo "--- strategy 1: concat demuxer, stream copy ---"
-          if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt -c copy \
-               -fflags +genpts -avoid_negative_ts make_zero -movflags +faststart \
-               out.mp4 2> s1.log; then
-            echo "strategy 1 ok"
-          else
-            echo "::error title=strategy 1 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s1.log | head -n 3 | tr '\n' ' ')"
-          fi
-
+          ffmpeg -y -hide_banner -i joined.ts -c copy -movflags +faststart out.mp4 2> join.log
           if [ ! -s out.mp4 ]; then
-            echo "--- strategy 2: concat demuxer, libx264 re-encode ---"
-            if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
-                 -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 \
-                 -video_track_timescale 90000 -movflags +faststart \
-                 out.mp4 2> s2.log; then
-              echo "strategy 2 ok"
-            else
-              echo "::error title=strategy 2 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s2.log | head -n 3 | tr '\n' ' ')"
-            fi
-          fi
-
-          if [ ! -s out.mp4 ]; then
-            echo "--- strategy 3: concat filter, one input per segment ---"
-            ARGS=(); FILTER=""
-            i=0
-            for f in ordered/*.mp4; do
-              ARGS+=(-i "$f")
-              FILTER+="[$i:v]"
-              i=$((i + 1))
-            done
-            FILTER="${FILTER%\]}]concat=n=${i}:v=1:a=0[outv]"
-            if ffmpeg -y -hide_banner "${ARGS[@]}" -filter_complex "$FILTER" \
-                 -map "[outv]" -c:v libx264 -preset medium -crf 18 \
-                 -pix_fmt yuv420p -r 60 -movflags +faststart \
-                 out.mp4 2> s3.log; then
-              echo "strategy 3 ok"
-            else
-              echo "::error title=strategy 3 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s3.log | head -n 3 | tr '\n' ' ')"
-            fi
-          fi
-
-          if [ -s out.mp4 ]; then
-            mv out.mp4 "gaokao22-${{ matrix.variant }}.mp4"
-            ls -lh "gaokao22-${{ matrix.variant }}.mp4"
-          else
-            echo "::error title=join failed::all three strategies failed; see s1/s2/s3.log"
+            echo "::error title=join failed::$(grep -iE 'invalid|error|non-monotonic|no such' join.log | head -n 3 | tr '\n' ' ')"
             exit 1
           fi
+          mv out.mp4 "gaokao22-${{ matrix.variant }}.mp4"
+          ls -lh "gaokao22-${{ matrix.variant }}.mp4"
 
       - name: Verify the joined movie
         run: |
