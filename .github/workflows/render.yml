@@ -183,14 +183,29 @@ jobs:
           set -euo pipefail
           : > list.txt
           for f in ordered/*.mp4; do echo "file '$f'" >> list.txt; done
+          echo "segments: $(ls -1 ordered | wc -l)"
           cat list.txt
-          if ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -c copy out.mp4; then
-            echo "joined with stream copy (no quality loss)"
-          else
-            echo "::warning::stream copy failed, re-encoding"
-            ffmpeg -y -loglevel error -f concat -safe 0 -i list.txt \
-              -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 out.mp4
+
+          echo "--- first segment probe ---"
+          ffprobe -v error -select_streams v -show_entries \
+            stream=codec_name,width,height,r_frame_rate,nb_frames,time_base \
+            -of default=noprint_wrappers=1 "ordered/01.mp4"
+
+          echo "--- attempt 1: stream copy with timestamp normalisation ---"
+          RC=0
+          ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
+            -c copy -fflags +genpts -avoid_negative_ts make_zero \
+            -movflags +faststart out.mp4 || RC=$?
+          if [ "$RC" -ne 0 ] || [ ! -s out.mp4 ]; then
+            echo "stream copy failed (rc=$RC); re-encoding"
+            echo "--- attempt 2: libx264, fully normalised ---"
+            ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
+              -c:v libx264 -preset medium -crf 18 \
+              -pix_fmt yuv420p -r 60 -s 2560x1440 \
+              -video_track_timescale 90000 -movflags +faststart \
+              out.mp4
           fi
+          ls -lh out.mp4
 
       - name: Verify the joined movie
         run: |
