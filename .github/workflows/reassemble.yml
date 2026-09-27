@@ -1,0 +1,149 @@
+name: reassemble
+
+# Re-runs only the concat step against segment artifacts that a previous run of
+# render.yml already produced. A full render is ~54 jobs and hours; the join is
+# minutes. Use this to iterate on ffmpeg behaviour without paying for a render.
+#
+#   gh workflow run reassemble.yml -f source_run_id=36320037685 -f variant=vo
+#
+# Failures are reported through ::error:: workflow commands, which GitHub
+# surfaces as check-run annotations on the public API, so they can be read
+# without authenticating against the job log endpoint.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run id of the render run holding seg-<variant>-S* artifacts
+        required: false
+        default: "36320037685"
+      variant:
+        description: vo or captions
+        required: false
+        default: vo
+        type: choice
+        options: [vo, captions]
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/reassemble.yml"
+
+jobs:
+  reassemble:
+    name: Rejoin ${{ inputs.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Pull the segments from the source run
+        uses: actions/download-artifact@v4
+        with:
+          path: parts
+          pattern: seg-${{ inputs.variant }}-S*
+          merge-multiple: false
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect in section order
+        run: |
+          set -uo pipefail
+          mkdir -p ordered
+          MISSING=0
+          for i in $(seq 1 27); do
+            SRC=$(find "parts/seg-${{ inputs.variant }}-S$i" -name "S$i.mp4" -type f 2>/dev/null | head -n 1)
+            if [ -z "$SRC" ]; then
+              echo "::error title=missing section::S$i not found for ${{ inputs.variant }}"
+              MISSING=$((MISSING + 1))
+              continue
+            fi
+            cp "$SRC" "$(printf 'ordered/%02d.mp4' "$i")"
+          done
+          echo "collected $(ls -1 ordered | wc -l) of 27"
+          echo "missing: $MISSING"
+
+      - name: Join
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          BAD=0
+          for f in ordered/*.mp4; do
+            SZ=$(stat -c%s "$f")
+            if [ ! -s "$f" ] || [ "$SZ" -lt 100000 ]; then
+              echo "::error title=bad segment::$(basename "$f") is $SZ bytes"
+              BAD=$((BAD + 1))
+            fi
+          done
+          [ "$BAD" -eq 0 ] || { echo "::error title=join aborted::$BAD segment(s) empty or truncated"; exit 0; }
+
+          P=$(ffprobe -v error -select_streams v -show_entries \
+              stream=codec_name,width,height,r_frame_rate,time_base \
+              -of default=noprint_wrappers=1 ordered/01.mp4 | tr '\n' ' ')
+          echo "::notice title=first segment::$P"
+
+          : > list.txt
+          for f in ordered/*.mp4; do echo "file '$(pwd)/$f'" >> list.txt; done
+
+          echo "--- strategy 1: concat demuxer, stream copy ---"
+          if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt -c copy \
+               -fflags +genpts -avoid_negative_ts make_zero -movflags +faststart \
+               out.mp4 2> s1.log; then
+            echo "strategy 1 ok"
+          else
+            echo "::error title=strategy 1 failed::$(grep -iE 'invalid|error|non-monotonic|no such|demuxer' s1.log | head -n 3 | tr '\n' ' ')"
+          fi
+
+          if [ ! -s out.mp4 ]; then
+            echo "--- strategy 2: concat demuxer, libx264 ---"
+            if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
+                 -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 \
+                 -video_track_timescale 90000 -movflags +faststart \
+                 out.mp4 2> s2.log; then
+              echo "strategy 2 ok"
+            else
+              echo "::error title=strategy 2 failed::$(grep -iE 'invalid|error|non-monotonic|no such|demuxer' s2.log | head -n 3 | tr '\n' ' ')"
+            fi
+          fi
+
+          if [ ! -s out.mp4 ]; then
+            echo "--- strategy 3: concat filter, one input per segment ---"
+            ARGS=(); FILTER=""; i=0
+            for f in ordered/*.mp4; do
+              ARGS+=(-i "$f"); FILTER+="[$i:v]"; i=$((i + 1))
+            done
+            FILTER="${FILTER%\]}]concat=n=${i}:v=1:a=0[outv]"
+            if ffmpeg -y -hide_banner "${ARGS[@]}" -filter_complex "$FILTER" \
+                 -map "[outv]" -c:v libx264 -preset medium -crf 18 \
+                 -pix_fmt yuv420p -r 60 -movflags +faststart \
+                 out.mp4 2> s3.log; then
+              echo "strategy 3 ok"
+            else
+              echo "::error title=strategy 3 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s3.log | head -n 3 | tr '\n' ' ')"
+            fi
+          fi
+
+          if [ -s out.mp4 ]; then
+            mv out.mp4 "gaokao22-${{ inputs.variant }}.mp4"
+            DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "gaokao22-${{ inputs.variant }}.mp4")
+            SZ=$(stat -c%s "gaokao22-${{ inputs.variant }}.mp4")
+            echo "::notice title=joined::duration ${DUR}s, $(($SZ / 1000000)) MB"
+            ls -lh "gaokao22-${{ inputs.variant }}.mp4"
+          else
+            echo "::error title=join failed::all three strategies failed"
+            exit 1
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: gaokao22-${{ inputs.variant }}
+          path: gaokao22-${{ inputs.variant }}.mp4
+          if-no-files-found: warn
+          retention-days: 30
