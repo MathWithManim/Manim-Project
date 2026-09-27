@@ -57,6 +57,16 @@ jobs:
       - name: Every section runs and every closing picture fits the frame
         run: python check_scenes.py
 
+      # Non-blocking on purpose. The fast gate above replaces Scene.play
+      # outright, so it never reaches Animation.clean_up_from_scene, which is
+      # exactly where a Transform aimed at a container mobject died. This mode
+      # runs the real begin/interpolate/finish/cleanup lifecycle with
+      # skip_rendering, so no pixels are produced but the failure path is
+      # exercised. It reports, it does not gate the 54-job render matrix.
+      - name: Real playback lifecycle, no rasterization (advisory)
+        continue-on-error: true
+        run: python check_scenes.py --playback
+
       - name: Deliverables match the brief
         run: python audit_deliverables.py
 

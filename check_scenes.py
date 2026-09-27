@@ -58,6 +58,37 @@ def exercise(name: str) -> tuple[bool, str]:
     return True, detail
 
 
+def exercise_playback(name: str) -> tuple[bool, str]:
+    """Run the real animation lifecycle without rasterising a single frame.
+
+    The fast gate above replaces ``play`` outright, which means it never reaches
+    ``Animation.clean_up_from_scene``. That is precisely where a Transform
+    targeting a container mobject blew up, and it is why the fast gate once
+    reported ALL SCENES OK for code that could not render. Here ``play`` stays
+    real and only ``skip_rendering`` is forced, so ``begin``/``interpolate``/
+    ``finish``/``clean_up_from_scene`` all execute and no pixels are produced.
+    """
+    scene = production.Gaokao22Scene()
+    scene.camera.background_color = production.BG
+    cls = type(scene)
+    real_play = cls.play
+
+    def fast_play(self, *animations, **kwargs):
+        kwargs["skip_rendering"] = True
+        return real_play(self, *animations, **kwargs)
+
+    scene.play = fast_play.__get__(scene, cls)
+    scene.wait = lambda seconds: None
+
+    try:
+        scene.run_section(name)
+    except Exception:
+        return False, traceback.format_exc(limit=8)
+
+    held = sum(scene._pause_log[0]) if scene._pause_log else 0.0
+    return True, f"real playback ok, {len(scene._pause_log[0]):>2} beats, {held:6.1f}s"
+
+
 def audit_frames() -> tuple[bool, str]:
     lines: list[str] = []
     bad = 0
@@ -89,6 +120,7 @@ def audit_frames() -> tuple[bool, str]:
 
 def main() -> int:
     args = sys.argv[1:]
+    playback = "--playback" in args
     failures = 0
 
     ok, detail = audit_frames()
@@ -99,18 +131,20 @@ def main() -> int:
         print("ALL FRAMES OK" if not failures else "FRAME AUDIT FAILED")
         return 1 if failures else 0
 
+    runner = exercise_playback if playback else exercise
+    mode = "playback" if playback else "fast"
     names = [a for a in args if not a.startswith("-")] or [
         f"S{i}" for i in range(1, production.SECTION_COUNT + 1)
     ]
     for raw in names:
         name = raw if raw.startswith("S") else f"S{raw}"
-        passed, detail = exercise(name)
-        print(f"{'PASS' if passed else 'FAIL'}  {name:<4}  {detail}")
+        passed, detail = runner(name)
+        print(f"{'PASS' if passed else 'FAIL'}  {name:<4}  [{mode}]  {detail}")
         if not passed:
             failures += 1
             print(detail)
     print()
-    print("ALL SCENES OK" if not failures else f"{failures} FAILURE(S)")
+    print(f"ALL SCENES OK ({mode})" if not failures else f"{failures} FAILURE(S) ({mode})")
     return 1 if failures else 0
 
 
