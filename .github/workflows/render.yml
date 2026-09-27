@@ -174,6 +174,13 @@ jobs:
           pattern: seg-${{ matrix.variant }}-S*
           merge-multiple: false
 
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Collect the sections in order
         run: |
           set -euo pipefail
@@ -189,42 +196,90 @@ jobs:
           done
 
       - name: Join
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          : > list.txt
-          for f in ordered/*.mp4; do echo "file '$f'" >> list.txt; done
-          echo "segments: $(ls -1 ordered | wc -l)"
-          cat list.txt
+          set -uo pipefail
+          N=$(ls -1 ordered 2>/dev/null | wc -l)
+          echo "segments present: $N"
 
-          echo "--- first segment probe ---"
-          ffprobe -v error -select_streams v -show_entries \
-            stream=codec_name,width,height,r_frame_rate,nb_frames,time_base \
-            -of default=noprint_wrappers=1 "ordered/01.mp4"
-
-          echo "--- attempt 1: stream copy with timestamp normalisation ---"
-          RC=0
-          ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
-            -c copy -fflags +genpts -avoid_negative_ts make_zero \
-            -movflags +faststart out.mp4 || RC=$?
-          if [ "$RC" -ne 0 ] || [ ! -s out.mp4 ]; then
-            echo "stream copy failed (rc=$RC); re-encoding"
-            echo "--- attempt 2: libx264, fully normalised ---"
-            ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
-              -c:v libx264 -preset medium -crf 18 \
-              -pix_fmt yuv420p -r 60 -s 2560x1440 \
-              -video_track_timescale 90000 -movflags +faststart \
-              out.mp4
+          BAD=0
+          for f in ordered/*.mp4; do
+            SZ=$(stat -c%s "$f")
+            if [ ! -s "$f" ] || [ "$SZ" -lt 100000 ]; then
+              echo "::error title=bad segment::$(basename "$f") is $SZ bytes"
+              BAD=$((BAD + 1))
+            fi
+          done
+          if [ "$BAD" -gt 0 ]; then
+            echo "::error title=join aborted::$BAD segment(s) are empty or truncated"
+            exit 0
           fi
-          ls -lh out.mp4
+
+          P=$(ffprobe -v error -select_streams v -show_entries \
+              stream=codec_name,width,height,r_frame_rate,time_base \
+              -of default=noprint_wrappers=1 ordered/01.mp4 | tr '\n' ' ')
+          echo "first segment: $P"
+
+          : > list.txt
+          for f in ordered/*.mp4; do echo "file '$(pwd)/$f'" >> list.txt; done
+          head -n 2 list.txt
+
+          echo "--- strategy 1: concat demuxer, stream copy ---"
+          if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt -c copy \
+               -fflags +genpts -avoid_negative_ts make_zero -movflags +faststart \
+               out.mp4 2> s1.log; then
+            echo "strategy 1 ok"
+          else
+            echo "::error title=strategy 1 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s1.log | head -n 3 | tr '\n' ' ')"
+          fi
+
+          if [ ! -s out.mp4 ]; then
+            echo "--- strategy 2: concat demuxer, libx264 re-encode ---"
+            if ffmpeg -y -hide_banner -f concat -safe 0 -i list.txt \
+                 -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 60 \
+                 -video_track_timescale 90000 -movflags +faststart \
+                 out.mp4 2> s2.log; then
+              echo "strategy 2 ok"
+            else
+              echo "::error title=strategy 2 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s2.log | head -n 3 | tr '\n' ' ')"
+            fi
+          fi
+
+          if [ ! -s out.mp4 ]; then
+            echo "--- strategy 3: concat filter, one input per segment ---"
+            ARGS=(); FILTER=""
+            i=0
+            for f in ordered/*.mp4; do
+              ARGS+=(-i "$f")
+              FILTER+="[$i:v]"
+              i=$((i + 1))
+            done
+            FILTER="${FILTER%\]}]concat=n=${i}:v=1:a=0[outv]"
+            if ffmpeg -y -hide_banner "${ARGS[@]}" -filter_complex "$FILTER" \
+                 -map "[outv]" -c:v libx264 -preset medium -crf 18 \
+                 -pix_fmt yuv420p -r 60 -movflags +faststart \
+                 out.mp4 2> s3.log; then
+              echo "strategy 3 ok"
+            else
+              echo "::error title=strategy 3 failed::$(grep -iE 'invalid|error|non-monotonic|no such' s3.log | head -n 3 | tr '\n' ' ')"
+            fi
+          fi
+
+          if [ -s out.mp4 ]; then
+            mv out.mp4 "gaokao22-${{ matrix.variant }}.mp4"
+            ls -lh "gaokao22-${{ matrix.variant }}.mp4"
+          else
+            echo "::error title=join failed::all three strategies failed; see s1/s2/s3.log"
+            exit 1
+          fi
 
       - name: Verify the joined movie
         run: |
           set -euo pipefail
-          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
-          STREAMS=$(ffprobe -v error -select_streams v -show_entries stream=codec_type -of csv=p=0 out.mp4 | wc -l)
-          SIZE=$(du -h out.mp4 | cut -f1)
           NAME=gaokao22-${{ matrix.variant }}.mp4
-          mv out.mp4 "$NAME"
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$NAME")
+          STREAMS=$(ffprobe -v error -select_streams v -show_entries stream=codec_type -of csv=p=0 "$NAME" | wc -l)
+          SIZE=$(du -h "$NAME" | cut -f1)
           echo "$NAME: ${DUR}s, ${STREAMS} video stream(s), ${SIZE}"
           [ "$STREAMS" = "1" ] || { echo "::error::expected 1 video stream, got $STREAMS"; exit 1; }
           awk -v d="$DUR" -v floor="$NARRATION_FLOOR" '
