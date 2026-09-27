@@ -136,10 +136,14 @@ jobs:
           VARIANT: "${{ matrix.variant }}"
         run: |
           set -euo pipefail
+          # Resolution is pinned here, not inherited from manim.cfg. manim.cfg
+          # silently drifted to 1280x720p30 with the opengl renderer and every
+          # segment inherited it, because nothing on the command line said otherwise.
+          FLAGS="-qk --resolution 2560,1440 --frame_rate 60 --format mp4"
           if [ "$VARIANT" = "captions" ]; then
-            manim render scene_no_vo.py Gaokao22Scene --media_dir media
+            manim render $FLAGS scene_no_vo.py Gaokao22Scene --media_dir media
           else
-            manim render scene.py Gaokao22Scene --media_dir media
+            manim render $FLAGS scene.py Gaokao22Scene --media_dir media
           fi
           OUT=$(find media -name 'Gaokao22Scene.mp4' -type f | head -n 1)
           if [ -z "$OUT" ]; then
@@ -147,6 +151,9 @@ jobs:
             find media -name '*.mp4' || true
             exit 1
           fi
+          ffprobe -v error -select_streams v -show_entries \
+            stream=width,height,r_frame_rate -of csv=p=0 "$OUT" \
+            | sed "s/^/S${{ matrix.i }} $VARIANT /"
           cp "$OUT" "S${{ matrix.i }}.mp4"
           ls -lh "S${{ matrix.i }}.mp4"
 
