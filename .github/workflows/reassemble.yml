@@ -28,6 +28,10 @@ on:
     paths:
       - ".github/workflows/reassemble.yml"
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   reassemble:
     name: Rejoin ${{ inputs.variant }}
